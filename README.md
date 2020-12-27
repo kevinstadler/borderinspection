@@ -1,3 +1,3 @@
-## borderline
+# border inspection
 
-generate Google Earth 'tours' of the world's borders
+generate [Earth Studio](https://earth.google.com/studio/) inspection tours of the world's borders

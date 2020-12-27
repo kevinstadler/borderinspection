@@ -5,7 +5,7 @@ import argparse
 import re
 import mmap
 from more_itertools import windowed
-from math import radians, degrees, sin, cos, asin, acos, sqrt, atan2
+from math import radians, degrees, sin, cos, asin, acos, sqrt, atan2, ceil
 
 from os.path import basename
 import simplekml
@@ -17,10 +17,10 @@ from pycountry import countries
 
 argparser = argparse.ArgumentParser(description='Generate Google Earth tour(s) from boundary polygons.')
 argparser.add_argument('file', nargs='*', default=['data/AUT.kmz'], help='boundary polygon .kml file(s) or list filename (.txt) to generate tour(s) for')
-argparser.add_argument('--tilt', type=float, default=90, help='camera angle (0 = vertically above, 90 = parallel to horizon)')
-argparser.add_argument('--distance', type=float, default=3, help='distance from the camera to the point on the ground (in m)')
-argparser.add_argument('--kmh', type=float, default=20, help='animation ground speed (in km/h)')
-argparser.add_argument('--dps', type=float, default=30, help='degrees that the camera rotates per second')
+argparser.add_argument('--tilt', type=float, default=80, help='camera angle (0 = vertically above, 90 = parallel to horizon)')
+argparser.add_argument('--distance', type=float, default=10, help='distance from the camera to the point on the ground (in m)')
+argparser.add_argument('--kmh', type=float, default=40, help='animation ground speed (in km/h)')
+argparser.add_argument('--dps', type=float, default=15, help='degrees that the camera rotates per second')
 argparser.add_argument('--ccw', '--left', action='store_true', help='whether the surrounded country should be to the left of the tour (default is clockwise, country to the right)')
 args = argparser.parse_args()
 
@@ -43,12 +43,12 @@ def takelonger(currentcoords, coordbytearray):
   return coords if currentcoords == None or len(coords) > len(currentcoords) else currentcoords
 
 def getheading(fr, to):
-  return degrees(atan2(to[0] - fr[0], to[1] - fr[1]))
+  return (degrees(atan2(to[0] - fr[0], to[1] - fr[1])) + 360) % 360
 
-def addflytopoint(point, heading, duration = None, distance = args.distance, tilt = args.tilt, mode = 'smooth'):
+def addflytopoint(point, heading, duration, distance = args.distance, tilt = args.tilt, mode = 'smooth'):
   playlist.newgxflyto(gxduration=duration, gxflytomode=mode,
-#    camera=simplekml.Camera(longitude = nxt[0], latitude = nxt[1], altitude = distance, heading = heading, tilt = tilt))
-    lookat=simplekml.LookAt(longitude = point[0], latitude = point[1], range = distance, heading = heading, tilt = tilt))
+    camera=simplekml.Camera(longitude = point[0], latitude = point[1], altitude = distance, heading = heading, tilt = tilt))
+#    lookat=simplekml.LookAt(longitude = point[0], latitude = point[1], range = distance, heading = heading, tilt = tilt))
 
 coordinatestartmarker = b'<Polygon><outerBoundaryIs><LinearRing><coordinates>'
 coordinateendmarker = b'</coordinates></LinearRing></outerBoundaryIs>'
@@ -74,7 +74,7 @@ for filename in args.file:
   origcount = len(coords)
   ring = asLineString(coords)
   coords = ring.simplify(.00025, False).coords
-  print('Smoothed longest tour from ' + str(origcount) + ' down to ' + str(len(coords)) + ' points')
+  print('Smoothed longest polygon from ' + str(origcount) + ' down to ' + str(len(coords)) + ' points')
 
   if (args.ccw):
     pass # TODO reverse array
@@ -87,7 +87,7 @@ for filename in args.file:
 
   kml = simplekml.Kml(name=name + ': a border tour', open=1)
   # Create a tour and attach a playlist to it
-  tour = kml.newgxtour(name='click here to start the tour!')
+  tour = kml.newgxtour(name='the border: a tour at ' + str(args.kmh) + 'km/h')
   playlist = tour.newgxplaylist()
 
   # Attach a gx:AnimatedUpdate to the playlist
@@ -102,6 +102,7 @@ for filename in args.file:
 #  playlist.newgxwait(gxduration=5)
 
   tourduration = 0
+  npoints = 0
   for prv, cur, nxt in windowed(coords, 3):
     walktime = 60 * 60 * greatcircledistance(prv, cur) / args.kmh
     tourduration = tourduration + walktime
@@ -113,21 +114,27 @@ for filename in args.file:
       walktime = walktime - rotationtime
 
     walktopoint = cur if rotationtime == 0 else LineString([prv, cur]).interpolate(walktime / (walktime + rotationtime), True).coords[0]
-    # earth does NOT like 90 degree turns per second! but lower dps means having to leave the center line wayyy earlier...so might have to adjust speed along line?
+    walkingpath = LineString([prv, walktopoint])
+    # earth does NOT like 90 degree turns per second!
 
-    if walktime > 0:
-      addflytopoint(walktopoint, prvheading, walktime)
+    # if a walk time is > 10s google earth goes funny, so split it up
+    walkingparts = ceil(walktime / 10)
+    for i in range(walkingparts):
+      addflytopoint(walkingpath.interpolate((i + 1) / walkingparts, True).coords[0], prvheading, walktime / walkingparts)
+      npoints += 1
+
     if rotationtime > 0:
       addflytopoint(cur, heading, rotationtime)
+      npoints += 1
 
     prvheading = heading
 
-  # TODO add marker point at the first polygon, label: 'the _ border (x km, tour will take y hours z minutes)'
-  # TO your left: _, to your right: Austria
-  duration = str(round(tourduration / 60)) + ' minutes'
+  # TODO add/remove using https://developers.google.com/kml/documentation/kmlreference#gx:animatedupdate
+  # to your left: _, to your right: Austria
+  duration = str(round(tourduration / 360, 1)) + ' hours'
   kml.newpoint(name=name + 'a border tour', description='a walk along the border, total duration ' + duration, coords=[coords[0]])
   line = kml.newlinestring(name='the border', coords=coords)
-  print('Saving tour file, total duration ' + duration)
+  print('Writing tour file with ' + str(npoints) + ' points, total duration ' + duration)
 
   # Save to file
   kml.save(basename(filename) + '-tour.kml')
