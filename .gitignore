@@ -1,0 +1,9 @@
+data
+filter
+*.geojson
+*.kml
+*.kmz
+*.jpeg
+*.json
+*.mp4
+*.png
