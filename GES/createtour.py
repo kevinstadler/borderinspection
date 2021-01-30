@@ -23,6 +23,10 @@
 # this one is good but still a little blurry sometimes, so increase altitude:
 #./createtour.py -split 10000 -n 2 -skip 9 -tilt 35 -vd 650 -all CHN.kmz
 
+# MOVIE REELS
+#./createtour.py -skip 11 -tilt 35 -vd 650 -m 13 CHN.kmz
+#./createtour.py -skip 1 -tilt 35 -vd 350 -m 13 AUT.kmz
+
 import argparse
 import re
 import mmap
@@ -75,34 +79,40 @@ shape.add_argument('-split', '-s', type=int, help='split tour into chunks of up 
 shape.add_argument('-frompart', type=int, default=0, help='first part to write')
 shape.add_argument('-nparts', type=int, help='write this many parts')
 shape.add_argument('-simplify', type=float, help='polygon simplification tolerance') # , default=.00025
-shape.add_argument('-skip', type=int, default=1, help='skip this many points at the beginning of the polygon')
+shape.add_argument('-skip', type=int, default=0, help='move starting point of the tour forward by this many points at the beginning of the input polygon')
+shape.add_argument('-startpoint', type=float, nargs=2, help='start tour at the polygon point at the given longitude/latitude (takes precedence over -skip)')
 shape.add_argument('-ccw', '-left', action='store_true', help='whether the surrounded polygon should be to the left of the tour (default is clockwise, polygon to the right)')
 
-group = argparser.add_argument_group('output files')
+group = argparser.add_mutually_exclusive_group(required=True)
 group.add_argument('-esp', action='store_true', help='write esp files')
-group.add_argument('-sh', action='store_true', help='write bash script for invoking the encoder')
-group.add_argument('-all', action='store_true', help='write all output files')
+group.add_argument('-sh', action='store_true', help='write shell script for invoking the encoder')
+group.add_argument('-all', action='store_true', help='write both esp and shell files')
+group.add_argument('-moviereel', type=int, help='write a movie-reel runthrough of the entire border with the given number of (key)frames')
 
 args = argparser.parse_args()
 
 if args.all:
   args.esp = True
   args.sh = True
+elif args.moviereel:
+  args.esp = True
 
 if args.esp:
-  # variable name needs to be lower case for GDAL (https://trac.osgeo.org/gdal/wiki/ConfigOptions)
+  # environment variable name needs to be lower case for GDAL (https://trac.osgeo.org/gdal/wiki/ConfigOptions)
   os.environ['http_proxy'] = 'http://192.168.2.2:3128'
   os.environ['https_proxy'] = 'http://192.168.2.2:3128'
   import urllib3
   urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
   import gpsinfo
+
   layer = gpsinfo.Layer(gpsinfo.Service('http://gpsinfo.org/service_wmts/gpsinfoWMTSCapabilities.xml'), 'AT_OGD_DHM_LAMB_10M_ELEVATION_COMPRESSED')
 
   # projection coordinates
   @cache
   def getaltitude(lon, lat):
-    return layer.value('interpolate', lon, lat)
+    # force to float here so that string error messages are not cached
+    return float(layer.value('interpolate', lon, lat))
 
   import mapbox
   import mercantile
@@ -126,14 +136,6 @@ if args.esp:
     image = Image.open(BytesIO(response.content))
     px = image.load()[x,y]
     return -10000 + ((px[0] * 256 * 256 + px[1] * 256 + px[2]) * 0.1)
-
-size = [ args.width, round(args.width * 9 / 16) ]
-
-if len(args.file) == 1 and args.file[0].endswith('.txt'):
-  with open(args.file[0]) as f:
-    args.file = f.read().split('\n')
-
-print('Generating ' + str(len(args.file)) + ' tour(s)')
 
 def getcoords(coordstring):
   return list(map(lambda coord: list(map(float, coord.split(','))), coordstring.split(' ')))
@@ -167,18 +169,6 @@ def gealtitude(m):
 def gecamlongitude(deg, relative = False):
   return .5780096 + deg * .02603647/90
 
-# cellmoves = [
-#   [-30, 0],
-#   [0, 30],
-#   [30, 0],
-#   [30, 0],
-#   [-30, 0],
-#   [-30, 0],
-#   [0, -30],
-#   [0, -30],
-#   [30, 0],
-#   # repeat, but MORE of each!
-# ]
 last = None
 # geodesic coordinates
 def getreliablealtitude(lon, lat):
@@ -259,10 +249,38 @@ def readlongest(filename):
         coords = takelonger(coords, coordinatebytearray)
   return coords
 
+tilt = radians(args.tilt)
+
+# this will be the camera altitude (constant above ground)
+verticaldistance = args.distance * sin(tilt) if args.verticaldistance == None else args.verticaldistance
+# next: the heading-specific distance of the camera on the ground
+grounddistance = args.distance * cos(tilt) if args.grounddistance == None else args.grounddistance
+
+# maintain tilt (at the expense of distance) if only one of the two was specified
+if args.verticaldistance == None and args.grounddistance != None:
+  # we know the adjacent and angle, get opposite
+  oppositeoveradjacent = tan(tilt)
+  verticaldistance = grounddistance * oppositeoveradjacent
+elif args.grounddistance == None and args.verticaldistance != None:
+  # we know the opposite and angle, get adjacent
+  oppositeoveradjacent = tan(tilt)
+  grounddistance = verticaldistance / oppositeoveradjacent
+
+effectivetilt = round(degrees(atan( verticaldistance / grounddistance )))
+print(f'''At a viewer distance of {round(args.distance)}m and tilt of {args.tilt}, the camera is:
+  * {round(verticaldistance)}m above the ground
+  * {round(grounddistance)}m behind the target
+  * effective tilt: {effectivetilt} degrees
+  * total camera distance: {round(sqrt(grounddistance**2 + verticaldistance**2))}m
+''')
+
+print('Generating ' + str(len(args.file)) + ' tour(s)')
 totaltotalseconds = 0
 for filename in args.file:
-
   name = splitext(basename(filename))[0]
+  if not args.moviereel:
+    name = f'{name}-t{effectivetilt}-vd{round(verticaldistance)}-gd{round(grounddistance)}-{args.kmh}kmh-skip{args.skip}' + (f'by{args.split}' if args.split else '')
+
   fullname = ''
   iso = re.search(r'[A-Z]{3}', name)
   if iso:
@@ -275,9 +293,14 @@ for filename in args.file:
   if (args.ccw):
     coords.reverse()
 
+  if args.startpoint:
+    args.skip = coords.index(args.startpoint)
+    print(f'Moving starting point of tour forward to {args.startpoint} (polygon point #{args.skip})')
+
   if args.skip > 0:
-    print(f'Skipping first {args.skip} points of the original polygon')
-    coords = coords[args.skip:]
+    print(f'Moving tour starting point forward to {args.skip} point(s) into the original polygon')
+    coords = coords[args.skip:] + coords[:args.skip]
+
 
   if args.simplify != None:
     origcount = len(coords)
@@ -325,58 +348,40 @@ for filename in args.file:
   distanceoffsets = cumulativedistances(coords)
   nframes, frameoffsets = distancestoframe(distanceoffsets)
 
-  # truncate
-  # if args.nframes != None and frameoffsets[-1] > args.nframes:
-  #   firsttoexclude = next((i for i, offset in enumerate(frameoffsets) if offset > args.nframes))
-  #   print(f'Limiting tour to {frameoffsets[firsttoexclude-1]} frames ({firsttoexclude} interleaved keyframes)')
-  #   coords = coords[:firsttoexclude]
-  #   distances = distances[:firsttoexclude - 1]
-  #   distancefromprev = distancefromprev[:firsttoexclude]
-  #   distanceoffsets = distanceoffsets[:firsttoexclude]
-  #   frameoffsets = frameoffsets[:firsttoexclude]
-    # TODO cut turningpoints
-#    turningpoints = turningpoints[:next((i for i, offset in enumerate(turningpoints) if offset > args.nframes))]
-#  print(turningpoints)
+  # calculate bearings based on interleaved points in case we throw them away for the moviereel
+  if args.moviereel:
+    print(f'Creating movie reel of {args.moviereel} (key)frames')
+    reelkeyframes = [round(len(coords) * i / args.moviereel) for i in range(args.moviereel)]
+    # calculate reverse bearing into the frames (that's the one we want to move towards anyway)
+    bearings = [ getbearing(coords[i+1], coords[i]) for i in reelkeyframes ]
+    # truncate and mock the offsets
+    coords = [ coords[k] for k in reelkeyframes ]
+    nframes = args.moviereel
+    frameoffsets = list(range(args.moviereel))
+  elif args.esp:
+    # anticipate bearing of future points by moving off the line
+    # to be facing the point, the camera needs to be offset AGAINST the bearing (add pi)
+    bearings = [ pi + getbearing(cur, nxt) for cur, nxt in pairwise(coords) ]
+    # duplicate first bearing
+    bearings = bearings[:1] + bearings
 
   # store the quantized information in some formats
-  framesbefore = [0] + [ nxt - prv for prv, nxt in pairwise(frameoffsets) ]
-  framesafter = framesbefore[1:] + [0]
-
+#  framesbefore = [0] + [ nxt - prv for prv, nxt in pairwise(frameoffsets) ]
+#  framesafter = framesbefore[1:] + [0]
 #  relativeoffsets = [ offset / nframes for offset in frameoffsets ]
 #  timebefore = [0] + [ nxt - prv for prv, nxt in pairwise(relativeoffsets) ]
 #  timeafter = timebefore[1:] + [0]
 
-  longitudes = [ el[0] for el in coords ]
-  latitudes = [ el[1] for el in coords ]
-
   print(f'~{round(distanceoffsets[-1])} km at {args.kmh} km/h: total runtime of {nframes} frames ({formatruntime(nframes / args.framerate)}), 1 keyframe every ~{round(nframes/len(coords))} frames ({round(nframes/(len(coords)*args.framerate))} seconds)')
 
-  tilt = radians(args.tilt)
-
-  # this will be the camera altitude (constant above ground)
-  verticaldistance = args.distance * sin(tilt) if args.verticaldistance == None else args.verticaldistance
-  # next: the heading-specific distance of the camera on the ground
-  grounddistance = args.distance * cos(tilt) if args.grounddistance == None else args.grounddistance
-
-  # maintain tilt (at the expense of distance) if only one of the two was specified
-  if args.verticaldistance == None and args.grounddistance != None:
-    # we know the adjacent and angle, get opposite
-    oppositeoveradjacent = tan(tilt)
-    verticaldistance = grounddistance * oppositeoveradjacent
-  elif args.grounddistance == None and args.verticaldistance != None:
-    # we know the opposite and angle, get adjacent
-    oppositeoveradjacent = tan(tilt)
-    grounddistance = verticaldistance / oppositeoveradjacent
-
-  effectivetilt = round(degrees(atan( verticaldistance / grounddistance )))
-  print(f'at a viewer distance of {round(args.distance)}m and tilt of {args.tilt}, the camera is {round(verticaldistance)}m above the ground, {round(grounddistance)}m behind the target (effective tilt of {effectivetilt}, distance {round(sqrt(grounddistance**2 + verticaldistance**2))}m)')
-
-  name = f'{name}-t{effectivetilt}-vd{round(verticaldistance)}-gd{round(grounddistance)}-{args.kmh}kmh-skip{args.skip}by{args.split}'
-
   if args.esp:
+    print(f'Querying {len(coords)} ground altitudes')
     altitudes = [ getreliablealtitude(lon, lat) for (lon, lat) in coords ]
   # TODO actually should window over the thing...
 #  slopes = [ (nxt - prv) / (1000*distance) for (prv, nxt), distance in zip(pairwise(altitudes), distances) ]
+
+    longitudes = [ el[0] for el in coords ]
+    latitudes = [ el[1] for el in coords ]
 
     longitudePOI = [ .2442333785617368 + longitude * .1221167/90 for longitude in longitudes ]
     latitudePOI = [ gelatitude(latitude) for latitude in latitudes ]
@@ -416,11 +421,6 @@ for filename in args.file:
       camlongitudes, camlatitudes = zip(*[ backpoint(i).coords[0] for i in range(len(longitudes)) ])
       print(greatcircledistance([longitudes[0], latitudes[0]], [camlongitudes[0], camlatitudes[0]]))
     else:
-      # anticipate bearing of future points by moving off the line
-      # to be facing the point, the camera needs to be offset AGAINST the bearing (add pi)
-      bearings = [ pi + getbearing(cur, nxt) for cur, nxt in pairwise(coords) ]
-      # duplicate first bearing
-      bearings = bearings[:1] + bearings
       # second part of https://www.igismap.com/formula-to-find-bearing-or-heading-angle-between-two-points-latitude-longitude/
       camlatitudes = [ degrees(asin(sin(radians(lat)) * cos(Ad) + cos(radians(lat)) * sin(Ad) * cos(b))) for lon, lat, b in zip(longitudes, latitudes, bearings) ]
       camlongitudes = [ lon + degrees(atan2(sin(b) * sin(Ad) * cos(radians(lat)), cos(Ad) - sin(radians(lat)) * sin(radians(lat2)))) for lon, lat, lat2, b in zip(longitudes, latitudes, camlatitudes, bearings) ]
@@ -428,10 +428,11 @@ for filename in args.file:
     longitude = [ gecamlongitude(longitude) for longitude in camlongitudes ]
     # , easeout = { 'type': 'easeOut', 'influence': .4 } if time == 0 else None
     latitude = [ gelatitude(latitude) for latitude in camlatitudes ]
-    print(f'Querying {len(camlongitudes)} altitudes')
+    print(f'Querying {len(camlongitudes)} camera altitudes')
     camaltitudes = [ getreliablealtitude(longitude, latitude) for longitude, latitude in zip(camlongitudes, camlatitudes) ] 
-    # smooth that shit
-    camaltitudes = camaltitudes[:1] + [ (one + two + three ) / 3 for one, two, three in windowed(camaltitudes, 3) ] + camaltitudes[-1:]
+    if not args.moviereel:
+      # smooth that shit
+      camaltitudes = camaltitudes[:1] + [ (one + two + three ) / 3 for one, two, three in windowed(camaltitudes, 3) ] + camaltitudes[-1:]
 
     # instead of getting altitude information about the camera position to avoid going into the ground, just rotate according to the slope
     # and perform some smoothing
@@ -538,9 +539,20 @@ for filename in args.file:
   partends = splitboundaryframes[1:]
   partdurations = [ end - start for start, end in zip(partstarts, partends) ]
 
+  size = [ args.width, round(args.width * 9 / 16) ]
+
   # zfill does same as {args.frompart + n + 1:0{npartsmagnitude}d}#
 #  partnames = [f'{name}pt{args.frompart + n+1}' for n, (startkeyframe, endkeyframe) in enumerate(pairwise(splitboundaries))]
-  partnames = [f'{name}pt{str(args.frompart + n+1).zfill(npartsmagnitude)}' for n, (startkeyframe, endkeyframe) in enumerate(pairwise(splitboundaries))]
+  if args.moviereel:
+    partnames = [ f'{name}-reel{args.moviereel}' ]
+    with open(f'{name}reel.sh', 'w') as f:
+      f.write(f'#!/bin/sh\n')
+      f.write(f'convert -size {size[0]}x{size[1]} xc:black -fill white -gravity center -pointsize 60 -draw "text 0,-50% \'The {fullname}\'" -pointsize 40 -draw "text 0,20% \'(runtime: {formatruntime(totalseconds)})\'" "{name}title.png"\n')
+      f.write('GAP=20\n')
+      #2x+halfgap needs to be same as resize*4*x + 3*gap
+      f.write('convert -background transparent \\( ' + name + 'title.png $1 +smush $((GAP/2)) \\) \\( $2 $3 $4 $5 +smush $GAP -resize 49.6% \\) \\( $6 $7 $8 $9 +smush $GAP -resize 49.65% \\) \\( ${10} ${11} ${12} ${13} +smush $GAP -resize 49.65% \\) -smush $((GAP/2)) -resize 75% ' + name + 'reel.png')
+  else:
+    partnames = [ f'{name}pt{str(args.frompart + n+1).zfill(npartsmagnitude)}' for n, (startkeyframe, endkeyframe) in enumerate(pairwise(splitboundaries)) ]
 
   for partname, partduration, (startkeyframe, endkeyframe) in zip(partnames, partdurations, pairwise(splitboundaries)):
     start = frameoffsets[startkeyframe]
@@ -615,6 +627,7 @@ for filename in args.file:
             }
           }
         }, esp)
+
     if args.sh:
       print(f'- writing {partname}.sh')
       # default args
@@ -663,8 +676,8 @@ for filename in args.file:
           f.write(f'convert -size {size[0]}x{size[1]} xc:black -fill white -font /Library/Fonts/AmericanTypewriter.ttc -pointsize {mainsize} -gravity center -draw "text 0,-30% \'border inspection\'" "{name}0.{ext}"\n')
           namesize = 32
           subsize = 16
-          f.write(f'convert -size {size[0]}x{size[1]} xc:black -fill white -font ps:helvetica -pointsize {namesize} -gravity center -draw "text 0,-20% \'The {fullname}\'" "{name}1.{ext}"\n')
-          f.write(f'convert "{name}1.{ext}" -fill white -font ps:helvetica -pointsize {subsize} -gravity center -draw "text 0,20% \'(runtime: {formatruntime(totalseconds)})\'" "{name}2.{ext}"\n')
+          f.write(f'convert -size {size[0]}x{size[1]} xc:black -fill white -pointsize {namesize} -gravity center -draw "text 0,-20% \'The {fullname}\'" "{name}1.{ext}"\n')
+          f.write(f'convert "{name}1.{ext}" -fill white -pointsize {subsize} -gravity center -draw "text 0,20% \'(runtime: {formatruntime(totalseconds)})\'" "{name}2.{ext}"\n')
           f.write('cd ..\n')
 
           f.write(f'time {ffmpeg} {" ".join(introframes)} {inputargs} -r {args.videoframerate} -filter_complex "{";".join(filters)}" {args.video} {args.container} "{partname}.mp4"\n')
