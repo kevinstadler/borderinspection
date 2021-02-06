@@ -1,27 +1,8 @@
 #!/usr/local/bin/python3.6
 
-# more ABOVE is good because #1 ground distance (footage quality) and #2 no weird/abrupt rotations
+# more ABOVE is good because #1 higher vertical distance (footage quality) and #2 no weird/abrupt rotations (less ground distance)
 #./createtour.py -split 10000 -n 3 -skip 1 -tilt 30 -sh AUT.kmz # nice view, this one has lots of source watermarks for some reason
 #./createtour.py -split 10000 -n 3 -skip 1 -tilt 70 -sh AUT.kmz # STEEP, loss of 3D
-
-# tilt=70 vd=376 still looks pixellated (not a lot of area per pixel at such an angle)
-# tilt=70 vd>400
-# OR improve resolution by changing tilt, e.g. try tilt 60, this is 346m above the ground:
-#./createtour.py -split 10000 -n 3 -skip 1 -tilt 60 -sh AUT.kmz
-# increase to 400m
-#./createtour.py -split 10000 -n 3 -skip 1 -tilt 60 -vd 400 -sh AUT.kmz
-
-# austria: 30 was quite a nice render, but with vd200, gd346 a bit too close. vd300 is still too close, try 350
-#./createtour.py -split 10000 -n 3 -skip 1 -tilt 30 -vd 350 -all AUT.kmz
-#./createtour.py -split 10000 -n 3 -skip 1 -tilt 35 -vd 350 -all AUT.kmz
-
-
-
-# chinese border looks CRAP from close up (especially the first 7 coordinates are extremely blurry)
-# 45 is EXTREMELY WEIRD/feels dislocated, 40 still not great so either
-##./createtour.py -split 10000 -n 2 -skip 9 -tilt 65 -vd 500 -all CHN.kmz
-# this one is good but still a little blurry sometimes, so increase altitude:
-#./createtour.py -split 10000 -n 2 -skip 9 -tilt 35 -vd 650 -all CHN.kmz
 
 # MOVIE REELS
 #./createtour.py -skip 11 -tilt 35 -vd 650 -m 13 CHN.kmz
@@ -29,20 +10,23 @@
 
 import argparse
 import re
-import mmap
 from itertools import accumulate
 from more_itertools import pairwise, windowed
 from math import acos, asin, atan, atan2, ceil, cos, degrees, floor, log10, pi, radians, sin, sqrt, tan
 
 import os
 from os.path import basename, splitext
-import percache
-cache = percache.Cache("/tmp/my-cache")
+from pathlib import Path
 
 import json
+import geojson
+#from osgeo import ogr
 from shapely.geometry import asLineString, LineString, Point, Polygon
 from shapely.ops import nearest_points
-from pycountry import countries
+from countryname import countryname
+
+import percache
+cache = percache.Cache("/tmp/my-cache")
 
 from pyproj import CRS, Transformer
 proj = CRS.from_epsg(31287)
@@ -54,7 +38,7 @@ argparser.add_argument('file', nargs='+', help='boundary polygon .kmz file(s) to
 animation = argparser.add_argument_group('tour animation properties')
 # first render with 75/500 means 130above, 482 behind
 # second render with 65/500 means 211 above, 453 behind
-animation.add_argument('-kmh', '-speed', type=float, default=50, help='animation ground speed (in km/h)')
+animation.add_argument('-kmh', '-speed', type=int, default=50, help='animation ground speed (in km/h)')
 animation.add_argument('-tilt', type=float, default=40, help='downwards camera angle (0 = parallel to horizon, 90 = vertically above). angles around 45 feel dislocated, so best < 40 (for panorama) or 60-70 (for satellite view with some 3d)')
 animation.add_argument('-distance', type=float, default=400, help='diagonal distance from the camera to the targeted point on the ground (in m)')
 animation.add_argument('-verticaldistance', '-vd', type=float, help='vertical distance between ground and camera, in m (overrides distance)')
@@ -66,20 +50,28 @@ video = argparser.add_argument_group('video rendering properties')
 video.add_argument('-width', type=int, default=1280, help='rendered image width (aspect ratio is fixed at 16:9)')
 video.add_argument('-framerate', '-r', type=int, default=25, help='render export framerate (one of 24, 25 or 60)')
 video.add_argument('-videoframerate', '-vr', type=int, default=25, help='output video framerate (if this differs from the export frame rate the video will appear sped up/slowed down accordingly)')
-video.add_argument('-fade', type=float, default=1.2)
+video.add_argument('-fade', type=float, default=1.2, help='ffmpeg fade duration (in s')
+# recommended upload encoding settings: https://support.google.com/youtube/answer/1722171
 #argparser.add_argument('--audio', default='-c:a aac/libfdk_aac -profile:a aac_low -b:a 384k')
-video.add_argument('-video', default='-pix_fmt yuv420p -c:v libx264 -profile:v high -preset slow -crf 18 -g 30 -bf 2', help='ffmpeg video encoding properties')
-video.add_argument('-container', default='-movflags faststart', help='ffmpeg container properties')
+# recommended keyframe interval (-g) is half the framerate (i.e. every two seconds)
+# increasing further above 50 doesn't affect the bitrate much: https://forum.videohelp.com/threads/382698-keyframe-interval-recommended-for-h264-video-at-50-fps#post2478931
+# GOP format is (IBBPBBPBBP....)I, so multiples of 3 all end on a P before the next IDR, which makes sense as ending on a B is pointless since looking forward to the following IDR is not possible with closed GOPS.
+# so 'best' (if at all relevant) keyframe interval is a multiple of 3! (50 makes the GOP IBBP...BBPP and 3% smaller than with -g 30, just leave it...)
+# (actually x264 appears to automatically pick a B/P alternation pattern that's smart)
+# see also http://www.chaneru.com/Roku/HLS/X264_Settings.htm#bframes
+# also says recommended HDR bitrates for 720p is 6.5MBps tops, -crf 18 has 13-16MBps @ 0.3x so turn up to 20+ maybe...
+video.add_argument('-video', default='-pix_fmt yuv420p -c:v libx264 -profile:v high -preset slow -crf 20 -g 50 -bf 2', help='ffmpeg video encoding properties')
+video.add_argument('-container', default=' -movflags faststart', help='ffmpeg container properties')
 
 shape = argparser.add_argument_group('shape properties and extent')
 
 #argparser.add_argument('-nkeyframes', type=int, help='only include the first points of the polygon')
 #argparser.add_argument('-nframes', type=int, help='only include points that make up to this number of video frames')
 shape.add_argument('-split', '-s', type=int, help='split tour into chunks of up to this many video frames')
-shape.add_argument('-frompart', type=int, default=0, help='first part to write')
+shape.add_argument('-frompart', type=int, default=1, help='first part to write (counting starts at 1) TODO this isnt actually implemented yet')
 shape.add_argument('-nparts', type=int, help='write this many parts')
-shape.add_argument('-simplify', type=float, help='polygon simplification tolerance') # , default=.00025
-shape.add_argument('-skip', type=int, default=0, help='move starting point of the tour forward by this many points at the beginning of the input polygon')
+shape.add_argument('-simplify', type=float, default=.0001, help='polygon simplification tolerance') # , default=.00025
+shape.add_argument('-skip', type=int, default=0, help='move starting point of the tour forward by this many points from the beginning of the input polygon')
 shape.add_argument('-startpoint', type=float, nargs=2, help='start tour at the polygon point at the given longitude/latitude (takes precedence over -skip)')
 shape.add_argument('-ccw', '-left', action='store_true', help='whether the surrounded polygon should be to the left of the tour (default is clockwise, polygon to the right)')
 
@@ -203,7 +195,7 @@ def distancestoframe(distances):
   return (frameoffsets[-1] + 1, frameoffsets)
 
 def formatruntime(seconds):
-  return f'{floor(seconds / 3600)}h {floor(seconds % 3600 / 60)}m {round(seconds % 60)}s'
+  return (f'{floor(seconds / 3600)}h ' if seconds >= 3600 else '') + f'{floor(seconds % 3600 / 60)}m {round(seconds % 60)}s'
 
 def partboundarykeyframeindices(frameoffsets, nparts = None):
   totalframes = frameoffsets[-1]
@@ -228,26 +220,28 @@ def keyframe(time, value, easein = None, easeout = None):
     'transitionLinked': True
   }
 
-@cache
-def readlongest(filename):
-  coords = None
-  with open(filename, 'r+b') as f:
-    mappedfile = mmap.mmap(f.fileno(), 0)
-    npolys = 0
-    offset = 0
-    coordinatestartmarker = b'<Polygon><outerBoundaryIs><LinearRing><coordinates>'
-    while True:
-      offset = mappedfile.find(coordinatestartmarker, offset + 1)
-      if offset == -1:
-        break
-      else:
-        npolys += 1
-        end = mappedfile.find(b'</coordinates></LinearRing></outerBoundaryIs>', offset)
-        mappedfile.seek(offset + len(coordinatestartmarker))
-        coordinatebytearray = mappedfile.read(end - mappedfile.tell())
-        print(f'Read polygon spec #{npolys}: {len(coordinatebytearray)} bytes')
-        coords = takelonger(coords, coordinatebytearray)
-  return coords
+#@cache
+def readlongestjson(filename):
+  with open(filename, 'r') as f:
+    fc = geojson.load(f)
+    feature = fc['features'][0]
+    if len(fc['features']) != 1:
+      print(f'WARNING: {filename} contains {len(fc["features"])} features?')
+#    for part in fc['features']:
+
+    coords = []
+    if feature['geometry']['type'] == 'Polygon':
+      # TODO
+      print(TODOwhatifitsapolygon)
+      coords = None
+    else:
+      # multipolygon
+      for part in feature['geometry']['coordinates']:
+        partcoords = list(geojson.utils.coords(part))
+        if len(partcoords) > len(coords):
+          coords = partcoords
+      print(f"Selected ring of length {len(coords)} from a total of {len(feature['geometry']['coordinates'])} parts")
+    return (countryname(feature), coords)
 
 tilt = radians(args.tilt)
 
@@ -277,17 +271,14 @@ print(f'''At a viewer distance of {round(args.distance)}m and tilt of {args.tilt
 print('Generating ' + str(len(args.file)) + ' tour(s)')
 totaltotalseconds = 0
 for filename in args.file:
-  name = splitext(basename(filename))[0]
+  fullname, coords = readlongestjson(filename)
+  print(fullname)
+
+  filename, ext = splitext(basename(filename))
   if not args.moviereel:
-    name = f'{name}-t{effectivetilt}-vd{round(verticaldistance)}-gd{round(grounddistance)}-{args.kmh}kmh-skip{args.skip}' + (f'by{args.split}' if args.split else '')
+    name = f'{filename}-t{effectivetilt}-vd{round(verticaldistance)}-gd{round(grounddistance)}-{args.kmh}kmh'
+    # more stuff is appended later
 
-  fullname = ''
-  iso = re.search(r'[A-Z]{3}', name)
-  if iso:
-    fullname = countries.get(alpha_3=iso.group(0))
-    fullname = (fullname.official_name or fullname.name).replace("'", "\\'") if fullname else ''
-
-  coords = readlongest(filename)
   print(f'Full border outline consists of {len(coords)} points')
 
   if (args.ccw):
@@ -297,10 +288,14 @@ for filename in args.file:
     args.skip = coords.index(args.startpoint)
     print(f'Moving starting point of tour forward to {args.startpoint} (polygon point #{args.skip})')
 
-  if args.skip > 0:
+  if args.skip != 0:
+    if args.skip < 0:
+      # reverse
+      args.skip = len(coords) + args.skip
     print(f'Moving tour starting point forward to {args.skip} point(s) into the original polygon')
     coords = coords[args.skip:] + coords[:args.skip]
-
+    if not args.moviereel:
+      name = name + f'-skip{args.skip}'
 
   if args.simplify != None:
     origcount = len(coords)
@@ -528,6 +523,7 @@ for filename in args.file:
     npartsmagnitude = 1
   else:
     npartsmagnitude = ceil(log10(totalframes / args.split))
+    name = name + f'by{args.split}'
 
     # FIXME check where the turningpoints are, DON'T split there (because it makes the easing through those points messy if they are at the end/beginning of videos)
     splitboundaries = partboundarykeyframeindices(frameoffsets, args.nparts) # this might shave off a couple more frames
@@ -541,26 +537,25 @@ for filename in args.file:
 
   size = [ args.width, round(args.width * 9 / 16) ]
 
-  # zfill does same as {args.frompart + n + 1:0{npartsmagnitude}d}#
+  # zfill does same as {args.frompart + n:0{npartsmagnitude}d}#
 #  partnames = [f'{name}pt{args.frompart + n+1}' for n, (startkeyframe, endkeyframe) in enumerate(pairwise(splitboundaries))]
   if args.moviereel:
     partnames = [ f'{name}-reel{args.moviereel}' ]
+    script = Path('reel.sh').read_text(encoding='utf-8')
     with open(f'{name}reel.sh', 'w') as f:
-      f.write(f'#!/bin/sh\n')
-      f.write(f'convert -size {size[0]}x{size[1]} xc:black -fill white -gravity center -pointsize 60 -draw "text 0,-50% \'The {fullname}\'" -pointsize 40 -draw "text 0,20% \'(runtime: {formatruntime(totalseconds)})\'" "{name}title.png"\n')
-      f.write('GAP=20\n')
-      #2x+halfgap needs to be same as resize*4*x + 3*gap
-      f.write('convert -background transparent \\( ' + name + 'title.png $1 +smush $((GAP/2)) \\) \\( $2 $3 $4 $5 +smush $GAP -resize 49.6% \\) \\( $6 $7 $8 $9 +smush $GAP -resize 49.65% \\) \\( ${10} ${11} ${12} ${13} +smush $GAP -resize 49.65% \\) -smush $((GAP/2)) -resize 75% ' + name + 'reel.png')
+      os.fchmod(f.fileno(), 0o744)
+      f.write(script.format(fullname=fullname, name=name, runtime=formatruntime(totalseconds), size=size))
+
   else:
-    partnames = [ f'{name}pt{str(args.frompart + n+1).zfill(npartsmagnitude)}' for n, (startkeyframe, endkeyframe) in enumerate(pairwise(splitboundaries)) ]
+    # args.frompart is at least 1 so counting starts at 1
+    partnames = [ f'{name}pt{str(args.frompart + n).zfill(npartsmagnitude)}' for n in range(len(splitboundaries) - 1) ]
 
-  for partname, partduration, (startkeyframe, endkeyframe) in zip(partnames, partdurations, pairwise(splitboundaries)):
-    start = frameoffsets[startkeyframe]
-    end = frameoffsets[endkeyframe]
-    print(f'Part {partname} (keyframe interval [{startkeyframe},{endkeyframe}], frame interval [{start},{end}]):')
+  if args.esp:
+    for partname, partduration, (startkeyframe, endkeyframe) in zip(partnames, partdurations, pairwise(splitboundaries)):
+      start = frameoffsets[startkeyframe]
+      end = frameoffsets[endkeyframe]
+      print(f'Writing {partname}.esp (keyframe interval [{startkeyframe},{endkeyframe}], frame interval [{start},{end}]):')
 
-    if args.esp:
-      print(f'- writing {partname}.esp')
       relativeoffsets = [ (offset - start) / partduration for offset in frameoffsets[startkeyframe:(endkeyframe + 1)] ]
       with open(f'data/{partname}.esp', 'w') as esp:
         json.dump({
@@ -628,103 +623,46 @@ for filename in args.file:
           }
         }, esp)
 
-    if args.sh:
-      print(f'- writing {partname}.sh')
-      # default args
-      ffmpeg = 'ffmpeg -v 24 -stats'
-      magnitude = ceil(log10(partduration))
-      frameinputpattern = f'/Volumes/Films/border/{partname}/footage/{partname}_%0{magnitude}d.jpeg'
-      # http://ffmpeg.org/ffmpeg-all.html#blend-1
-      # TODO figure out watermark opacity first: https://im.snibgo.com/watermark.htm#deriv
-      inputargs = f'-r {args.videoframerate} -i "{frameinputpattern}"'
-      logofilter = 'removelogo=earthlogo.bmp'#,delogo=x=867:y=630:w=279:h=13'
-
-      with open(f'data/{partname}.sh', 'w') as f:
-        os.fchmod(f.fileno(), 0o744)
-        f.write('#!/bin/sh\n')
-        if partname == partnames[0]:
-          ext = 'png' # png (even PNG24:) is somehow not recognized by ffmpeg, so do jpeg instead
-          intro = [
-            # format: filename duration (None is replaced by black screen, args.fade duration is added on either side)
-            [None, .5], # be-a: 2
-            ['0', 1], # be-a: 3
-            [None, .5], # be-a: 1.5
-            ['1', 0], # be-a: 2
-            ['2', 2], # be-a: 2
-            [None, .5] # be-a: 1.5
-          ]
-
-          def intropart(file, duration):
-            if file == None:
-              return f'-f lavfi -i "color=c=black:size={"x".join(map(str, size))}:duration={duration + 2 * args.fade}:r={args.videoframerate},format=yuv420p"'
-            else:
-              return f'-loop 1 -t {duration + 2*args.fade} -i "data/{name}{file}.{ext}"'
-
-          introframes =  [ intropart(file, duration) for (file, duration) in intro ]
-
-          def crossfade(i, offset):
-            return f'[o{i}][{i+1}]xfade=offset={offset}:duration={args.fade},format=yuv420p[o{i+1}]'
-
-          offsets = list(accumulate([el[1] for el in intro ]))
-          # complete file fades to black (for 1 full second)
-          filters = [f'[0]format=yuv420p[o0]'] + [crossfade(i, offsets[i] + i * args.fade) for i in range(len(intro))]
-          # logo filter (doesn't matter if we apply it to the intro frames as well, they're all black down there anyway)
-          filters = filters + [f'[o{len(intro)}]{logofilter}']
-          f.write('cd data\n')
-          f.write(f'convert -size {size[0]}x{size[1]} xc:black "{name}black.{ext}"\n')
-          mainsize = 72
-          f.write(f'convert -size {size[0]}x{size[1]} xc:black -fill white -font /Library/Fonts/AmericanTypewriter.ttc -pointsize {mainsize} -gravity center -draw "text 0,-30% \'border inspection\'" "{name}0.{ext}"\n')
-          namesize = 32
-          subsize = 16
-          f.write(f'convert -size {size[0]}x{size[1]} xc:black -fill white -pointsize {namesize} -gravity center -draw "text 0,-20% \'The {fullname}\'" "{name}1.{ext}"\n')
-          f.write(f'convert "{name}1.{ext}" -fill white -pointsize {subsize} -gravity center -draw "text 0,20% \'(runtime: {formatruntime(totalseconds)})\'" "{name}2.{ext}"\n')
-          f.write('cd ..\n')
-
-          f.write(f'time {ffmpeg} {" ".join(introframes)} {inputargs} -r {args.videoframerate} -filter_complex "{";".join(filters)}" {args.video} {args.container} "{partname}.mp4"\n')
-  #      f.write(f'if [ ! -d "{name}" ]; then\n')
-  #      f.write(f'  mkdir "{name}"\n')
-  #      f.write(f'  sshfs shared@shared.local:/Users/shared/Downloads/{name}/footage {name} || exit 1\n')
-  #      f.write(f'fi\n')
-        # mount every part
-        # for partname in partnames:
-        #   f.write(f'if [ ! -d "{partname}" ]; then\n')
-        #   f.write(f'  ln -s "/Volumes/Films/border/{partname}/footage" "{partname}" || exit 1\n')
-        #   f.write(f'fi\n')
-        # put -r AFTER -f concat but BEFORE -i to adjust input framerate as well. -r 24 also required for all the input images, and lavfi's also need it accordingly
-#        f.write(f'time ffmpeg {" ".join(introframes)} -f concat -r {args.videoframerate} -i {name}.txt -r {args.videoframerate} -filter_complex "{";".join(filters)}" {args.video} {args.container} "../{name}{args.kmh}{skipinfix}.mp4"\n')
-        else:
-          f.write(f'time {ffmpeg} {inputargs} -vf "{logofilter}" {args.video} {args.container} "{partname}.mp4"\n')
-
   if args.sh:
-    print(f'Writing {name}.sh')
-    with open(name + '.sh', 'w') as f:
+    print(f'Writing {filename}.sh')
+
+    intro = [
+      # format: filename duration (None is replaced by black screen, args.fade duration is added on either side)
+      [None, .5], # be-a: 2
+      ['0', 1], # be-a: 3
+      [None, .5], # be-a: 1.5
+      ['1', 0], # be-a: 2
+      ['2', 2], # be-a: 2
+      [None, .5] # be-a: 1.5
+    ]
+
+    def intropart(file, duration):
+      if file == None:
+        return f'-f lavfi -i "color=c=black:size={"x".join(map(str, size))}:duration={duration + 2 * args.fade}:r={args.videoframerate},format=yuv420p"'
+      else:
+        return f'-loop 1 -t {duration + 2*args.fade} -i "frontmatter/{name}{file}.$EXT"'
+
+    introframes = " ".join([ intropart(file, duration) for (file, duration) in intro ])
+
+    def crossfade(i, offset):
+      return f'[o{i}][{i+1}]xfade=offset={offset}:duration={args.fade},format=yuv420p[o{i+1}]'
+
+    offsets = list(accumulate([el[1] for el in intro ]))
+    # complete file fades to black (for 1 full second)
+    filters = [f'[0]format=yuv420p[o0]'] + [crossfade(i, offsets[i] + i * args.fade) for i in range(len(intro)-1)]
+    filters = ";".join(filters + [f'[o{len(intro)-1}]format=yuv420p']) # append final out so that the logofilter can consume it as an input
+
+    # no need to deal with magnitudes if we use a quoted '*' (all in-file now)
+    # https://en.wikibooks.org/wiki/FFMPEG_An_Intermediate_Guide/image_sequence#Quote_the_glob_pattern
+
+    # TODO the partduration (and thus magnitude) IS actually possibly different for different parts, so encode this somehow?
+#    magnitude = ceil(log10(partduration))
+#    frameinputpattern = f'/Volumes/Films/border/{partname}/footage/{partname}_%0{magnitude}d.jpeg'
+    # http://ffmpeg.org/ffmpeg-all.html#blend-1
+    # TODO figure out watermark opacity first: https://im.snibgo.com/watermark.htm#deriv
+
+    script = Path('tour.sh').read_text(encoding='utf-8')
+    with open(filename + '.sh', 'w') as f:
       os.fchmod(f.fileno(), 0o744)
-      # concat demuxer for all parts
-      f.write(f'''#!/bin/bash
-ls {name}pt*.mp4 || exit 1
-touch tmp.txt
-read -r -a FILES <<< `ls data/{name}pt*.mp4`''' + # no hash characters in f strings so do this
-'''
-N=$((${#FILES[@]}-1))
-for (( i=0; i < $N; i++ )); do
-  echo "file ${FILES[$i]}" >> tmp.txt
-done
-# we still have the last $file
-LAST=${FILES[$N]}
-TRUNCATED="outro-truncated-$LAST"
-OUTRO="outro-fadeout-$LAST"
-echo "file $TRUNCATED" >> tmp.txt
-echo "file $OUTRO" >> tmp.txt
-if [ ! -f "$TRUNCATED" ]; then
-  # cut into two segments https://superuser.com/questions/883108/avoid-ffmpeg-re-encode-using-complex-filter
-  NFRAMES=`ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 "$LAST"`''' +
-  f'''
-FADESTART=`echo "2 k $NFRAMES {args.framerate} / 1 - p" | dc`
-  echo "Splitting last video ($LAST) into raw + fadeout part (at $FADESTART)"
-  {ffmpeg} -i "$LAST" -ss 0 -t $FADESTART -c copy "$TRUNCATED"
-  # apply fade out to last video only, then concat
-  {ffmpeg} -i "$LAST" -ss $FADESTART -t 1 -vf "fade=out:0:{args.framerate}" "$OUTRO" # -t 1 should be superfluous?
-fi
-echo "Merging $N parts into {name}.mp4"
-{ffmpeg} -f concat -i tmp.txt -c copy -y "{name}.mp4"
-rm tmp.txt''')
+      f.write(script.format(fullname=fullname, kmh=args.kmh, name=name, framerate=args.framerate, videoframerate=args.videoframerate, introframes=introframes, introfilter=filters, runtime=formatruntime(totalseconds), size=size, args=args.video + args.container, firstpart=args.frompart))
+

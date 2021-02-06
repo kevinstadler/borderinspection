@@ -1,0 +1,8 @@
+#!/bin/sh
+if [ $# -eq 0 ]; then
+  echo "Usage: removemark pic [pic...]
+  exit 1
+fi
+for file in "$@"; do
+  ffmpeg -i "$file" -vf "removelogo=`pwd $0`/whiteonblack.png" "`basename $file .jpeg`-cleared.jpg"
+done
