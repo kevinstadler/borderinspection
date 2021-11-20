@@ -1,5 +1,4 @@
 data
-filter
 *.geojson
 *.kml
 *.kmz
