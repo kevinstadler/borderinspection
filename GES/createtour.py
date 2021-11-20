@@ -4,10 +4,6 @@
 #./createtour.py -split 10000 -n 3 -skip 1 -tilt 30 -sh AUT.kmz # nice view, this one has lots of source watermarks for some reason
 #./createtour.py -split 10000 -n 3 -skip 1 -tilt 70 -sh AUT.kmz # STEEP, loss of 3D
 
-# MOVIE REELS
-#./createtour.py -skip 11 -tilt 35 -vd 650 -m 13 CHN.kmz
-#./createtour.py -skip 1 -tilt 35 -vd 350 -m 13 AUT.kmz
-
 import argparse
 import re
 from itertools import accumulate
@@ -86,25 +82,28 @@ args = argparser.parse_args()
 if args.all:
   args.esp = True
   args.sh = True
-elif args.moviereel:
-  args.esp = True
+#elif args.moviereel:
+#  args.esp = True
 
 if args.esp:
-  # environment variable name needs to be lower case for GDAL (https://trac.osgeo.org/gdal/wiki/ConfigOptions)
-  os.environ['http_proxy'] = 'http://192.168.2.2:3128'
-  os.environ['https_proxy'] = 'http://192.168.2.2:3128'
+
   import urllib3
   urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-  import gpsinfo
+  if args.file[0] == '../data/2/AUT.geojson':
+    # environment variable name needs to be lower case for GDAL (https://trac.osgeo.org/gdal/wiki/ConfigOptions)
+    os.environ['http_proxy'] = 'http://192.168.2.2:3128'
+    os.environ['https_proxy'] = 'http://192.168.2.2:3128'
 
-  layer = gpsinfo.Layer(gpsinfo.Service('http://gpsinfo.org/service_wmts/gpsinfoWMTSCapabilities.xml'), 'AT_OGD_DHM_LAMB_10M_ELEVATION_COMPRESSED')
+    import gpsinfo
+    print('Connecting gpsinfo.org layer')
+    layer = gpsinfo.Layer(gpsinfo.Service('http://gpsinfo.org/service_wmts/gpsinfoWMTSCapabilities.xml'), 'AT_OGD_DHM_LAMB_10M_ELEVATION_COMPRESSED')
 
-  # projection coordinates
-  @cache
-  def getaltitude(lon, lat):
-    # force to float here so that string error messages are not cached
-    return float(layer.value('interpolate', lon, lat))
+    # projection coordinates
+    @cache
+    def getaltitude(lon, lat):
+      # force to float here so that string error messages are not cached
+      return float(layer.value('interpolate', lon, lat))
 
   import mapbox
   import mercantile
@@ -161,10 +160,10 @@ def gealtitude(m):
 def gecamlongitude(deg, relative = False):
   return .5780096 + deg * .02603647/90
 
-last = None
+last = 0
 # geodesic coordinates
 def getreliablealtitude(lon, lat):
-  if args.file[0] != 'AUT.kmz':
+  if args.file[0] != '../data/2/AUT.geojson':
     altitude = getmapboxaltitude(lon, lat)
   else:
     t = proj.transform(lat, lon)
@@ -178,7 +177,7 @@ def getreliablealtitude(lon, lat):
     last = altitude
     return altitude
   else:
-    print(f'WARNING: interpolated altitude at {lon},{lat} is {altitude}')
+    print(f'WARNING: interpolated altitude at {lon},{lat} is {altitude}, returning {last} instead')
     return last
 
 def cumulativedistances(coords):
@@ -275,7 +274,9 @@ for filename in args.file:
   print(fullname)
 
   filename, ext = splitext(basename(filename))
-  if not args.moviereel:
+  if args.moviereel:
+    name = filename
+  else:
     name = f'{filename}-t{effectivetilt}-vd{round(verticaldistance)}-gd{round(grounddistance)}-{args.kmh}kmh'
     # more stuff is appended later
 
@@ -285,8 +286,13 @@ for filename in args.file:
     coords.reverse()
 
   if args.startpoint:
-    args.skip = coords.index(args.startpoint)
-    print(f'Moving starting point of tour forward to {args.startpoint} (polygon point #{args.skip})')
+    print(coords[47:55])
+    try:
+      args.skip = coords.index(tuple(args.startpoint))
+    except ValueError:
+      print("Can't find exact startpoint, looking for closest...")
+      args.skip = next(i for i, (lon, lat) in enumerate(coords) if abs(lon - args.startpoint[0]) < .01 and abs(lat - args.startpoint[1]) < .01)
+    print(f'Moving starting point of tour forward to {coords[args.skip]} (polygon point #{args.skip})')
 
   if args.skip != 0:
     if args.skip < 0:
@@ -378,7 +384,9 @@ for filename in args.file:
     longitudes = [ el[0] for el in coords ]
     latitudes = [ el[1] for el in coords ]
 
-    longitudePOI = [ .2442333785617368 + longitude * .1221167/90 for longitude in longitudes ]
+#    longitudePOI = [ .2442333785617368 + longitude * .1221167/90 for longitude in longitudes ]
+    longitudePOI = [ gelongitude(longitude) for longitude in longitudes ]
+    # this should be 0: altitudes.index(None)
     latitudePOI = [ gelatitude(latitude) for latitude in latitudes ]
     altitudePOI = [ gealtitude(altitude) for altitude in altitudes ]
 
@@ -526,6 +534,9 @@ for filename in args.file:
     name = name + f'by{args.split}'
 
     # FIXME check where the turningpoints are, DON'T split there (because it makes the easing through those points messy if they are at the end/beginning of videos)
+    if args.frompart > 1:
+      print('NOT IMPLEMENTED YET')
+      print(foo)
     splitboundaries = partboundarykeyframeindices(frameoffsets, args.nparts) # this might shave off a couple more frames
     print(f'Split {nframes} frames into {len(splitboundaries) - 1} parts of length ~{args.split} each')
 
@@ -540,11 +551,12 @@ for filename in args.file:
   # zfill does same as {args.frompart + n:0{npartsmagnitude}d}#
 #  partnames = [f'{name}pt{args.frompart + n+1}' for n, (startkeyframe, endkeyframe) in enumerate(pairwise(splitboundaries))]
   if args.moviereel:
-    partnames = [ f'{name}-reel{args.moviereel}' ]
+    partnames = [ f'{name}-reel' ] #{args.moviereel}
     script = Path('reel.sh').read_text(encoding='utf-8')
+    print(f'Writing {name}reel.sh')
     with open(f'{name}reel.sh', 'w') as f:
       os.fchmod(f.fileno(), 0o744)
-      f.write(script.format(fullname=fullname, name=name, runtime=formatruntime(totalseconds), size=size))
+      f.write(script.format(name=name, fullname=fullname.replace("'","\\'"), runtime=formatruntime(totalseconds), size=size))
 
   else:
     # args.frompart is at least 1 so counting starts at 1
@@ -628,12 +640,12 @@ for filename in args.file:
 
     intro = [
       # format: filename duration (None is replaced by black screen, args.fade duration is added on either side)
-      [None, .5], # be-a: 2
-      ['0', 1], # be-a: 3
-      [None, .5], # be-a: 1.5
-      ['1', 0], # be-a: 2
-      ['2', 2], # be-a: 2
-      [None, .5] # be-a: 1.5
+      [None, .5],
+      ['0', 1],
+      [None, .5],
+      ['1', 0],
+      ['2', 2],
+      [None, .5]
     ]
 
     def intropart(file, duration):
@@ -664,5 +676,5 @@ for filename in args.file:
     script = Path('tour.sh').read_text(encoding='utf-8')
     with open(filename + '.sh', 'w') as f:
       os.fchmod(f.fileno(), 0o744)
-      f.write(script.format(fullname=fullname, kmh=args.kmh, name=name, framerate=args.framerate, videoframerate=args.videoframerate, introframes=introframes, introfilter=filters, runtime=formatruntime(totalseconds), size=size, args=args.video + args.container, firstpart=args.frompart))
+      f.write(script.format(fullname=fullname.replace("'","\\'"), kmh=args.kmh, name=name, framerate=args.framerate, videoframerate=args.videoframerate, introframes=introframes, introfilter=filters, runtime=formatruntime(totalseconds), size=size, args=args.video + args.container, firstpart=args.frompart))
 
