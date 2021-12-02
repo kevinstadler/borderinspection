@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.6
+#!/usr/local/bin/python3
 
 # more ABOVE is good because #1 higher vertical distance (footage quality) and #2 no weird/abrupt rotations (less ground distance)
 #./createtour.py -split 10000 -n 3 -skip 1 -tilt 30 -sh AUT.kmz # nice view, this one has lots of source watermarks for some reason
@@ -17,7 +17,7 @@ from pathlib import Path
 import json
 import geojson
 #from osgeo import ogr
-from shapely.geometry import asLineString, LineString, Point, Polygon
+from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import nearest_points
 from countryname import countryname
 
@@ -43,7 +43,7 @@ animation.add_argument('-altitudeevery', type=float, default=.2, help='how often
 #animation.add_argument('--easein', type=float, default=1, help='in seconds (per 90 degrees maybe?)')
 
 video = argparser.add_argument_group('video rendering properties')
-video.add_argument('-width', type=int, default=1280, help='rendered image width (aspect ratio is fixed at 16:9)')
+video.add_argument('-height', type=int, default=1080, help='rendered image height (aspect ratio is fixed at 16:9)')
 video.add_argument('-framerate', '-r', type=int, default=25, help='render export framerate (one of 24, 25 or 60)')
 video.add_argument('-videoframerate', '-vr', type=int, default=25, help='output video framerate (if this differs from the export frame rate the video will appear sped up/slowed down accordingly)')
 video.add_argument('-fade', type=float, default=1.2, help='ffmpeg fade duration (in s')
@@ -66,9 +66,9 @@ shape = argparser.add_argument_group('shape properties and extent')
 shape.add_argument('-split', '-s', type=int, help='split tour into chunks of up to this many video frames')
 shape.add_argument('-frompart', type=int, default=1, help='first part to write (counting starts at 1) TODO this isnt actually implemented yet')
 shape.add_argument('-nparts', type=int, help='write this many parts')
-shape.add_argument('-simplify', type=float, default=.0001, help='polygon simplification tolerance') # , default=.00025
-shape.add_argument('-skip', type=int, default=0, help='move starting point of the tour forward by this many points from the beginning of the input polygon')
-shape.add_argument('-startpoint', type=float, nargs=2, help='start tour at the polygon point at the given longitude/latitude (takes precedence over -skip)')
+shape.add_argument('-simplify', type=float, default=.00005, help='polygon simplification tolerance') # .0001 ~ 11.1m (at the equator)
+shape.add_argument('-skip', type=int, default=0, help='move starting point of the tour forward by this many points from the beginning of the input polygon (before simplification)')
+shape.add_argument('-startpoint', type=float, nargs=2, help='start tour at the polygon point at the given longitude/latitude. takes precedence over -skip.')
 shape.add_argument('-ccw', '-left', action='store_true', help='whether the surrounded polygon should be to the left of the tour (default is clockwise, polygon to the right)')
 
 group = argparser.add_mutually_exclusive_group(required=True)
@@ -90,10 +90,10 @@ if args.esp:
   import urllib3
   urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-  if args.file[0] == '../data/2/AUT.geojson':
+  if False:#args.file[0] == '../data/2/AUT.geojson':
     # environment variable name needs to be lower case for GDAL (https://trac.osgeo.org/gdal/wiki/ConfigOptions)
-    os.environ['http_proxy'] = 'http://192.168.2.2:3128'
-    os.environ['https_proxy'] = 'http://192.168.2.2:3128'
+    #os.environ['http_proxy'] = 'http://192.168.2.2:3128'
+    #os.environ['https_proxy'] = 'http://192.168.2.2:3128'
 
     import gpsinfo
     print('Connecting gpsinfo.org layer')
@@ -163,7 +163,7 @@ def gecamlongitude(deg, relative = False):
 last = 0
 # geodesic coordinates
 def getreliablealtitude(lon, lat):
-  if args.file[0] != '../data/2/AUT.geojson':
+  if True:#args.file[0] != '../data/2/AUT.geojson':
     altitude = getmapboxaltitude(lon, lat)
   else:
     t = proj.transform(lat, lon)
@@ -197,16 +197,23 @@ def formatruntime(seconds):
   return (f'{floor(seconds / 3600)}h ' if seconds >= 3600 else '') + f'{floor(seconds % 3600 / 60)}m {round(seconds % 60)}s'
 
 def partboundarykeyframeindices(frameoffsets, nparts = None):
-  totalframes = frameoffsets[-1]
   # for nparts part, take *up to* nparts+1 boundaries
-  splitboundaries = list(range(0, totalframes if nparts == None else min(totalframes, (nparts + 1) * args.split), args.split))
-  keyframeindices = [ next((i for i, keyframeoffset in enumerate(frameoffsets) if keyframeoffset >= frameno)) for frameno in splitboundaries ]
+  keyframeindices = [0]
+  for i in range(1, len(frameoffsets)):
+    try:
+      if frameoffsets[i+1] > frameoffsets[keyframeindices[-1]] + args.split:
+        keyframeindices.append(i)
+        if nparts and len(keyframeindices)-1 == nparts:
+          break
+    except IndexError:
+      print("Boundary keyframe search hit end of list")
+
   # if necessary, add the final boundary (end of video) manually
   if keyframeindices[-1] != len(frameoffsets) - 1:
     # add the index of the final keyframe iff:
     # * we can have an arbitrary number of parts
-    # * we hve limited parts, and we haven't reached the number of parts yet
-    if nparts == None or len(keyframeindices) < nparts:
+    # * we have limited parts, and we haven't reached the number of parts yet
+    if nparts == None or len(keyframeindices) <= nparts:
       keyframeindices.append(len(frameoffsets) - 1)
   return keyframeindices
 
@@ -231,8 +238,8 @@ def readlongestjson(filename):
     coords = []
     if feature['geometry']['type'] == 'Polygon':
       # TODO
-      print(TODOwhatifitsapolygon)
       coords = None
+      raise NotImplementedError
     else:
       # multipolygon
       for part in feature['geometry']['coordinates']:
@@ -286,7 +293,6 @@ for filename in args.file:
     coords.reverse()
 
   if args.startpoint:
-    print(coords[47:55])
     try:
       args.skip = coords.index(tuple(args.startpoint))
     except ValueError:
@@ -300,13 +306,14 @@ for filename in args.file:
       args.skip = len(coords) + args.skip
     print(f'Moving tour starting point forward to {args.skip} point(s) into the original polygon')
     coords = coords[args.skip:] + coords[:args.skip]
-    if not args.moviereel:
-      name = name + f'-skip{args.skip}'
+
+  if not args.moviereel:
+    name = name + f'-s{args.skip},{coords[0][0]},{coords[0][1]}'
 
   if args.simplify != None:
     origcount = len(coords)
     # TODO make simplify dynamic based on distance
-    coords = asLineString(coords).simplify(args.simplify, False).coords
+    coords = LineString(coords).simplify(args.simplify, False).coords
     print(f'Smoothed tour from {origcount} down to {len(coords)} points')
 
   # calculate total runtime before trimming anything
@@ -321,17 +328,17 @@ for filename in args.file:
   print(f'Total runtime of the COMPLETE {round(totaldistance)}km tour at {args.kmh} km/h would be {formatruntime(totalseconds)} ({totalframes} video frames)')
   print()
 
-  if args.split != None:
-    # calculate frame offsets for the entire tour...
-    frameoffsets = [ distancetoframe(distance) for distance in distanceoffsets ]
+  if args.split != None and args.nparts != None:
+    firstoversteppedframe = next(( i for i, distance in enumerate(distanceoffsets) if distancetoframe(distance) >= args.split*args.nparts ))
+    print(f"{args.nparts} parts @ <={args.split} frames each can only have {args.nparts*args.split} frames, only considering up to vertex {firstoversteppedframe} (frame {distancetoframe(distanceoffsets[firstoversteppedframe])})")
+    coords = coords[:firstoversteppedframe]
     # ...to get the indices of the first keyframes after the boundaries
-    partboundarykeyframes = partboundarykeyframeindices(frameoffsets, args.nparts)
-    print(f'Split tour into {len(partboundarykeyframes)-1} parts, each of length ~{args.split} video frames')
-    print('Preliminary split frames:')
-    print([frameoffsets[i] for i in partboundarykeyframes])
+    #partboundarykeyframes = partboundarykeyframeindices(frameoffsets, args.nparts, True)
+    #print(f'Split tour into {len(partboundarykeyframes)-1} parts, each of length ~{args.split} video frames')
+    #print(f'Preliminary split frames: {[frameoffsets[i] for i in partboundarykeyframes]}')
 
     # now cut down the coords array appropriately
-    coords = coords[:partboundarykeyframes[-1] + 1]
+    #coords = coords[:partboundarykeyframes[-1] + 1]
 
   # return a new array containing the point itself, as well as any interleaved ones
   def interleave(prv, nxt):
@@ -536,9 +543,10 @@ for filename in args.file:
     # FIXME check where the turningpoints are, DON'T split there (because it makes the easing through those points messy if they are at the end/beginning of videos)
     if args.frompart > 1:
       print('NOT IMPLEMENTED YET')
-      print(foo)
+      raise NotImplementedError
     splitboundaries = partboundarykeyframeindices(frameoffsets, args.nparts) # this might shave off a couple more frames
     print(f'Split {nframes} frames into {len(splitboundaries) - 1} parts of length ~{args.split} each')
+    print(f'Final split frames: {[frameoffsets[i] for i in splitboundaries]}')
 
   splitboundaryframes = [ frameoffsets[keyframe] for keyframe in splitboundaries ]
 
@@ -546,7 +554,7 @@ for filename in args.file:
   partends = splitboundaryframes[1:]
   partdurations = [ end - start for start, end in zip(partstarts, partends) ]
 
-  size = [ args.width, round(args.width * 9 / 16) ]
+  size = [ round(args.height * 16 / 9), args.height ]
 
   # zfill does same as {args.frompart + n:0{npartsmagnitude}d}#
 #  partnames = [f'{name}pt{args.frompart + n+1}' for n, (startkeyframe, endkeyframe) in enumerate(pairwise(splitboundaries))]
