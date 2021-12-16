@@ -30,7 +30,7 @@ import xml.etree.ElementTree as xmlET
 import sys
 import urllib.request
 # sudo apt install python3-gdal
-import gdal
+from osgeo import gdal
 import math
 import numpy
 import os

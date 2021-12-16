@@ -308,7 +308,7 @@ for filename in args.file:
     coords = coords[args.skip:] + coords[:args.skip]
 
   if not args.moviereel:
-    name = name + f'-s{args.skip},{coords[0][0]},{coords[0][1]}'
+    name = name + f'-s{args.skip}-{coords[0][0]}-{coords[0][1]}'
 
   if args.simplify != None:
     origcount = len(coords)
@@ -373,13 +373,6 @@ for filename in args.file:
     # duplicate first bearing
     bearings = bearings[:1] + bearings
 
-  # store the quantized information in some formats
-#  framesbefore = [0] + [ nxt - prv for prv, nxt in pairwise(frameoffsets) ]
-#  framesafter = framesbefore[1:] + [0]
-#  relativeoffsets = [ offset / nframes for offset in frameoffsets ]
-#  timebefore = [0] + [ nxt - prv for prv, nxt in pairwise(relativeoffsets) ]
-#  timeafter = timebefore[1:] + [0]
-
   print(f'~{round(distanceoffsets[-1])} km at {args.kmh} km/h: total runtime of {nframes} frames ({formatruntime(nframes / args.framerate)}), 1 keyframe every ~{round(nframes/len(coords))} frames ({round(nframes/(len(coords)*args.framerate))} seconds)')
 
   if args.esp:
@@ -413,27 +406,9 @@ for filename in args.file:
     # equivalent angular distance of the ground distance (in m)
     Ad = grounddistance / 6371000
 
-    if False:
-      # stay on border line (together with easing this will lead to corner cuts) at grounddistance away
-      # TODO add a straight-bearing line backwards!
-      initialbearing = getbearing([longitudes[0], latitudes[0]], [longitudes[1], latitudes[1]])
-      # 0 is north
-      backprojection = [ longitudes[0] - sin(initialbearing), latitudes[0] - cos(initialbearing) ]
-#      print(initialbearing)
-#      print(getbearing(backprojection, [longitudes[0], latitudes[0]]))
-      withprepoint = [backprojection] + list(zip(longitudes, latitudes))
-      def backpoint(i):
-        # https://shapely.readthedocs.io/en/stable/manual.html#shapely.ops.nearest_points on circle + line (circles will be highly inaccurate closer to the poles!)
-#        return nearest_points(Point(longitudes[i], latitudes[i]).buffer(Ad).exterior, LineString(withprepoint[max(0, i-10):(i+2)]))[0]
-        return Point(longitudes[i], latitudes[i]).buffer(20*Ad).exterior.intersection(LineString(withprepoint[max(0, i-10):(i+2)]))
-        # alternatively: object.intersection(other) but make sure the other is a line, not a polygon!
-
-      camlongitudes, camlatitudes = zip(*[ backpoint(i).coords[0] for i in range(len(longitudes)) ])
-      print(greatcircledistance([longitudes[0], latitudes[0]], [camlongitudes[0], camlatitudes[0]]))
-    else:
-      # second part of https://www.igismap.com/formula-to-find-bearing-or-heading-angle-between-two-points-latitude-longitude/
-      camlatitudes = [ degrees(asin(sin(radians(lat)) * cos(Ad) + cos(radians(lat)) * sin(Ad) * cos(b))) for lon, lat, b in zip(longitudes, latitudes, bearings) ]
-      camlongitudes = [ lon + degrees(atan2(sin(b) * sin(Ad) * cos(radians(lat)), cos(Ad) - sin(radians(lat)) * sin(radians(lat2)))) for lon, lat, lat2, b in zip(longitudes, latitudes, camlatitudes, bearings) ]
+    # second part of https://www.igismap.com/formula-to-find-bearing-or-heading-angle-between-two-points-latitude-longitude/
+    camlatitudes = [ degrees(asin(sin(radians(lat)) * cos(Ad) + cos(radians(lat)) * sin(Ad) * cos(b))) for lon, lat, b in zip(longitudes, latitudes, bearings) ]
+    camlongitudes = [ lon + degrees(atan2(sin(b) * sin(Ad) * cos(radians(lat)), cos(Ad) - sin(radians(lat)) * sin(radians(lat2)))) for lon, lat, lat2, b in zip(longitudes, latitudes, camlatitudes, bearings) ]
 
     longitude = [ gecamlongitude(longitude) for longitude in camlongitudes ]
     # , easeout = { 'type': 'easeOut', 'influence': .4 } if time == 0 else None
