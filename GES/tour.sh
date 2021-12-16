@@ -22,8 +22,10 @@ LOGOFILTER="[ssa]blend=all_mode=subtract[rssa];[1]split[sa],[2]blend=all_mode=mu
 #FFMPEG="ffmpeg -v 24 -stats"
 cd data
 
-FADEINDURATION=1.5
+FADEINDURATION=1.6
 FADEOUTDURATION=2
+# the first keyframe of cloud-encoded videos is only at frame 252, so we'll re-encode the full intro (with fadein) until there
+FIRSTGOP=250
 
 FRAMEDIR="/Volumes/Films/border"
 if [ -d "$FRAMEDIR" ]; then
@@ -76,14 +78,13 @@ if [ $? -eq 0 ]; then
     # args: 1=infile, 2='in' or 'out', 3=truncatedfile, 4=fadedfile, 5=shorttruncate (when -eq 0 truncate intro as well as outro time)
     if [ ! -e "$4" ]; then
       # cut into two segments https://superuser.com/questions/883108/avoid-ffmpeg-re-encode-using-complex-filter
+
+      # computation goes like this: NFRAMES -> FADESECONDS -> FADEFRAMES -> FADESECONDS -> TRUNCSTART -> TRUNCFRAMES -> TRUNCDURATION
       local NFRAMES=`ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 "$1"`
-      local TRUNCFRAMES=""
+      echo
+      echo "$1 has $NFRAMES frames (`echo "2 k $NFRAMES {framerate} / p" | dc` seconds)"
       if [ "$2" == "in" ]; then
         local FADESECONDS=$FADEINDURATION
-        if [ "$5" -eq 0 ]; then
-          echo "Truncating on both ends! this feature online works with fade-in atm..."
-          printf -v TRUNCFRAMES "%d" $(bc -l <<< "$NFRAMES - $FADEINDURATION*{framerate} - $FADEOUTDURATION*{framerate}")
-        fi
       else
         local FADESECONDS=$FADEOUTDURATION # without forced keyframes this will be fuzzy anyway
       fi
@@ -92,10 +93,21 @@ if [ $? -eq 0 ]; then
       FADESECONDS=`echo "2 k $FADEFRAMES {framerate} / p" | dc`
 
       # set if not set yet
-      if [ -z "$TRUNCFRAMES" ]; then
-        printf -v TRUNCFRAMES "%.0f" $(bc -l <<< "$NFRAMES - $FADESECONDS*{framerate}")
+      if [ -z "$FIRSTGOP" ]; then
+        TRUNCSTART=$FADEFRAMES
+        INTROFRAMES=$FADEFRAMES
+      else
+        # FIXME if it's outro, need to move ahead....
+        TRUNCSTART=$FIRSTGOP
+        INTROFRAMES=$FIRSTGOP
       fi
-      echo $TRUNCFRAMES
+
+      printf -v TRUNCFRAMES "%.0f" $(bc -l <<< "$NFRAMES - $TRUNCSTART")
+      if [ "$5" -eq 0 ]; then
+        echo "Truncating on both ends! this feature only works with fade-in atm..."
+        printf -v TRUNCFRAMES "%.0f" $(bc -l <<< "$TRUNCFRAMES - $FADEOUTDURATION*{framerate}")
+      fi
+
       local TRUNCDURATION=`echo "2 k $TRUNCFRAMES {framerate} / p" | dc`
 
       # DEBUG that fucker:
@@ -103,9 +115,12 @@ if [ $? -eq 0 ]; then
       #Total number of frames: 10031 (frame indices go from 1 to 10031, TIMES from 0 to (10030)/25 = 6m41.2 (after last frame vid is 6m41.24 long))
       #9926:frame,I 9976:frame,I 9982:frame,I
 
-
       if [ "$2" == "in" ]; then
-        local TRUNCSTART=$FADESECONDS
+        if [ -z "$FIRSTGOP" ]; then
+          local TRUNCSTART=$FADESECONDS
+        else
+          local TRUNCSTART=$FIRSTGOP
+        fi
         local FADESTART=0
       else
         local TRUNCSTART=0
@@ -113,20 +128,19 @@ if [ $? -eq 0 ]; then
         local FADESTART=$TRUNCDURATION
       fi
 
-      echo "$1 has $NFRAMES frames (`echo "2 k $NFRAMES {framerate} / p" | dc` seconds)"
       STARTFRAME=`echo "2 k $FADESTART {framerate} * 1 + p" | dc` # add one because frame index
       echo "Fade $2 part is $FADEFRAMES frames, starting at ${{FADESTART}}s (frame $STARTFRAME)"
 
       if [ "$3" == 'skip' ]; then
-        echo "Not producing truncated one"
+        echo "Truncated part already generated, skipping"
       else
-        echo "minus ${{FADESECONDS}}s of fade, the truncated (non re-encoded) part is $TRUNCFRAMES frames ($TRUNCDURATION seconds)"
+        echo "Minus ${{TRUNCSTART}} frames of intro (${{FADEFRAMES}} of which are fade), the truncated (non re-encoded) part is $TRUNCFRAMES frames ($TRUNCDURATION seconds)"
         echo "Splitting $1 into raw (starting at $TRUNCSTART) + fade-$2 part (starting at ${{FADESTART}}s)"
       fi
       # only -ss before -i does accurate input seeking to the forced keyframe (-ss after skipped the whole keyframe for some reason)
       # accurate input seeking is especially crucial on the truncated video which comes right after the fade-in:
 #        ffmpeg -v 24 -stats -ss $TRUNCSTART -i "$1" -frames:v $TRUNCFRAMES -c copy "$3"
-      ffmpeg -v 24 -ss $FADESTART -i "$1" -frames:v $FADEFRAMES -vf "fade=$2:0:$FADEFRAMES" "$4" || exit 1
+      ffmpeg -v 24 -ss $FADESTART -i "$1" -frames:v $INTROFRAMES -vf "fade=$2:0:$FADEFRAMES" "$4" || exit 1
     fi
   }}
 
@@ -141,7 +155,8 @@ if [ $? -eq 0 ]; then
   #echo "file $TRUNCATED" >> tmp.txt
   # https://ffmpeg.org/ffmpeg-formats.html#concat-1
   echo "file ${{FILES[0]}}" >> tmp.txt
-  echo "inpoint $FADEINDURATION" >> tmp.txt
+  INTROSECONDS=`echo "2 k $INTROFRAMES {framerate} / p" | dc`
+  echo "inpoint $INTROSECONDS" >> tmp.txt
 
   # only write from the second until the second-to-last file
   for (( i=1; i < $N; i++ )); do
@@ -160,7 +175,6 @@ if [ $? -eq 0 ]; then
   NFRAMES=`ffprobe -v error -select_streams v:0 -show_entries stream=nb_frames -of default=nokey=1:noprint_wrappers=1 "$LAST"`
   # Out point is exclusive, which means that the demuxer will not output packets with a decoding timestamp greater or equal to Out point.
   FADEOUTOFFSET=`echo "2 k $((NFRAMES - 1 - $FADEOUTDURATION*{framerate})) {framerate} / p" | dc`
-  echo $FADEOUTOFFSET
   echo "outpoint $FADEOUTOFFSET" >> tmp.txt
 
   OUTRO="frontmatter/outro-fadeout-$LAST"
