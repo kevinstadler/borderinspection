@@ -1,7 +1,7 @@
 ## Usage
 
 ```
-./site.py ../data/landuse/*.json > index.html
+./site.py ../data/landuse/*.json > ../web/landuse/index.html
 ```
 
 ## IGBP colors

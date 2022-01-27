@@ -117,8 +117,8 @@ if args.landuse:
       # if bats doesn't think the pixel is water at all, just return the last water value that we got from it before...
       global lastwater
       if water == 14 or water == 15:
-        lastwater = water
-      return 32 - lastwater
+        lastwater = 32 - water
+      return lastwater
   
     def getpointinfo(lonlat, landuse = True):
       xy = lonlattoxy(lonlat)
@@ -134,6 +134,8 @@ if args.landuse:
         # prev can be either a vertex of the border, or a pixel cutting point we found somewhere?
         curlandusesegment = [ ring[0] ]
         landuse = []
+        global lastwater
+        lastwater = 17
         for vertex in ring:
           xy = lonlattoxy(vertex)
           if xy == lastxy:
@@ -240,8 +242,7 @@ with open("data/summary.csv", 'w') as summary:
             # add one (array) element for the whole part, containing landuse of outer ring AND holes (if any)
             landuses.append([ getlanduses(ring, stat['length']) for ring, stat in zip(part['coordinates'], [stats] + stats['holes']) ])
 
-        if runlanduse:
-          with open(landusefile, 'w') as out:
-            json.dump({ 'info': country['info'], 'stats': country['stats'], 'landuses': landuses }, out)
+        with open(landusefile, 'w') as out:
+          json.dump({ 'info': country['info'], 'stats': country['stats'], 'landuses': landuses }, out)
       except ValueError:
         print("Some point wasn't covered, continueing with next country...")
