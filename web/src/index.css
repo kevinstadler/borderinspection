@@ -1,14 +1,52 @@
+@charset "utf-8";
+
 body {
   font-family: 'Times New Roman', serif;
+  font-size: 12pt;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  margin: 10px;
+  margin: auto;
+  width: fit-content;
 }
 
 #main {
   width: fit-content;
   margin: 0 10px;
 /*  margin: auto; */
+}
+
+p {
+  max-width: 45em;
+}
+
+h2::before {
+  content: '▾ ';
+}
+
+h2.accordion::before {
+  content: '▸ ';
+}
+
+h2.accordion:hover {
+  background-color: lightgray;
+  cursor: pointer;
+}
+
+h2 + div {
+  padding: 0 18px;
+  overflow: hidden;
+  max-height: 0;
+  transition: max-height 0.35s ease-out;
+}
+
+div.recent {
+  display: flex;
+  width: 100%;
+  overflow-x: auto;
+}
+
+div.recent > :not(:first-child) {
+  padding-left: 10px;
 }
 
 h1 {
@@ -28,6 +66,7 @@ table {
 
 th {
   padding: 0 1em;
+  white-space: nowrap;
 }
 
 td {

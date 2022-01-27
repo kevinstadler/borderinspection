@@ -1,8 +1,9 @@
 #!/bin/sh
 if [ $# -eq 0 ]; then
-  echo "Usage: removemark pic [pic...]
+  echo "Usage: removemark pic [pic...]"
   exit 1
 fi
 for file in "$@"; do
-  ffmpeg -i "$file" -vf "removelogo=`pwd $0`/whiteonblack.png" "`basename $file .jpeg`-cleared.jpg"
+#  ffmpeg -v 24 -i "$file" -vf "removelogo=`dirname $0`/whiteonblack.png" "`dirname $file`/`basename $file .jpeg`-cleared.png"
+  ffmpeg -v 24 -i "$file" -i "`dirname $0`/alpha.png" -i "`dirname $0`/color.png" -filter_complex "[0][ssa]blend=all_mode=subtract[rssa];[1]split[sa],[2]blend=all_mode=multiply[ssa];[sa]negate[nsa];[rssa][nsa]blend=all_mode=divide,removelogo=`dirname $0`/whiteonblack.png" "`dirname $file`/`basename $file .jpeg`-cleared.png" || exit 1
 done

@@ -18,7 +18,9 @@
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
-    "deploy": "scp -Cr build/* kevin@thiswasyouridea.com:/var/www/thiswasyouridea.com/borderinspection/"
+    "predeploy": "npm run build",
+    "deploy": "scp -Cr build/static/* kevin@thiswasyouridea.com:/var/www/thiswasyouridea.com/borderinspection/static/ && scp -C build/* kevin@thiswasyouridea.com:/var/www/thiswasyouridea.com/borderinspection/",
+    "redeploy": "scp -Cr build/* kevin@thiswasyouridea.com:/var/www/thiswasyouridea.com/borderinspection/"
   },
   "eslintConfig": {
     "extends": [

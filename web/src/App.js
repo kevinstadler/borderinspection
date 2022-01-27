@@ -1,19 +1,49 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useExpanded, useGroupBy, useSortBy, useTable } from 'react-table';
+import { useExpanded, useSortBy, useTable } from 'react-table';
+
+const parseRows = (string, colNames = undefined) => {
+  const data = string.trim().split("\n").map((line) => line.split(';'));
+  if (colNames === undefined) {
+    colNames = data[0];
+    data.shift();
+  }
+  return data.map((row) => Object.fromEntries(row.map((value, i) => [colNames[i], i >= 3 ? parseFloat(value) : value])));
+}
 
 function App() {
+  const [loadedCountries, setLoadedCountries] = useState([]);
   const [data, setData] = useState([]);
   useEffect(() => {
-    fetch('data.csv').then((res) => {
+    fetch('data/data.csv').then((res) => {
       res.text().then((txt) => {
-        const [names, ...lines] = txt.trim().split("\n").map((line) => line.split(';'));
-        const xs = lines.map((line) => Object.fromEntries(line.map((value, i) => [names[i], i >= 3 ? parseFloat(value) : value])));
-        setData(xs);
+        setData(parseRows(txt).map((obj) => { return { ...obj, subRows: [{name: 'Loading parts...'}] } }));
       });
     });
   }, []);
+  // is this necessary??
+//  const tableData = useMemo(() => data, loadedCountries);
 
-  const twoDigits = (n) => n < .01 ? n.toPrecision(1) : n.toFixed(2);
+  const getCountry = (row) => {
+    if (loadedCountries.includes(row.index)) {
+      row.getToggleRowExpandedProps().onClick();
+    } else {
+      row.toggleRowExpanded(true);
+      fetch('data/' + row.allCells[0].value + '.csv').then((res) => {
+        res.text().then((txt) => {
+          setLoadedCountries([parseInt(row.id), ...loadedCountries]);
+          const newData = [ ...data ];
+          newData[row.id] = { ...data[row.id], subRows: parseRows(txt, Object.keys(data[0])) }
+          console.log(newData[row.id]);
+          setData(newData);
+          // gotta do this again for some reason...
+          row.toggleRowExpanded(true);
+        });
+      });
+    }
+}
+
+//  const twoDigits = (n) => n < .01 ? n.toPrecision(1) : n.toFixed(2);
+  const unitIfValue = (value, unit) => value ? value + unit : '';
 
   const columns = useMemo(() => 
     [
@@ -21,51 +51,52 @@ function App() {
         accessor: 'iso'
       },
       {
-        Header: 'Country',
+        Header: 'Full Name',
         accessor: 'name',
-        aggregate: 'first',
+        Cell: (p) => {
+//          console.log(p);
+          return p.value;
+        }
       },
       {
-        Header: 'Parts',
-        aggregate: 'count',
+        Header: '# Parts',
+        accessor: 'nparts',
+        Cell: (p) => isNaN(p.value) ? '' : p.value,
       },
       {
-        Header: 'Border length',
+        Header: '# Holes',
+        accessor: 'holes',
+      },
+      {
+        Header: 'Border Length',
         accessor: 'perimeter',
-        Cell: (p) => twoDigits(p.value) + ' km',
-        aggregate: 'sum',
+        Cell: (p) => unitIfValue(p.value, ' km'),
       },
 /*      {
         Header: 'Area',
         accessor: 'area',
         sortDescFirst: true,
-        Cell: (p) => twoDigits(p.value) + ' km²',
-        aggregate: 'sum',
+        Cell: (p) => unitIfValue(p.value, ' km²'),
       },*/
-      {
-        Header: 'Holes',
-        accessor: 'holes',
-        aggregate: 'first',
-      },
       {
         Header: '📼',
         accessor: 'videos',
-        Cell: (p) => p.value ? <>{p.value.split(' ').map(id => <a href={'https://youtu.be/' + id}>📼</a>)}</> : '',
-        aggregate: 'first',
+        Cell: (p) => p.value ? <span>{p.value.split(' ').map(id => <a href={'https://youtu.be/' + id}>📼</a>)}</span> : '',
       },
     ], []);
 
   const tableInstance = useTable({
       columns,
       data,
+      // don't do subcomponent https://github.com/tannerlinsley/react-table/pull/2531 but generator function:
+      // https://react-table.tanstack.com/docs/api/useTable#row-properties
+      // https://reactjs.org/docs/hooks-reference.html
       initialState: {
         hiddenColumns: ['iso'],
-        groupBy: ['iso'],
         sortBy: [
-          { id: 'iso' },
+          { id: 'nparts', desc: true },
           { id: 'perimeter', desc: true },
           { id: 'holes', desc: true },
-          { id: 'Parts', desc: true },
           { id: 'videos', desc: true },
           { id: 'name' },
         ]
@@ -74,7 +105,7 @@ function App() {
 //      disableSortRemove: true,
       defaultCanSort: true, // to allow sorting by aggregated 'nparts'
       aggregations: { first: (leaves, agg) => leaves[0] }
-    }, useGroupBy, useSortBy, useExpanded);
+    }, useSortBy, useExpanded);
 
   const {
     getTableProps,
@@ -88,22 +119,12 @@ function App() {
 
   // id of the newly designated 'sortedIndex=0' column
   const prependToMultiSort = (designatedColumn) => {
-//    const newTop = sortBy.findIndex((el) => el.id == designatedColumn.id);
-    // ugly to mangle the state directly but what gives let's see
-//    console.log(sortBy.findIndex((el) => el.id.equalsIgnoreCase(designatedColumn.id)));
-    sortBy.sort((a, b) => a.id === designatedColumn.id ? -1 : b.id === designatedColumn.id ? 1 : 0);
+    const newSortBy = [...sortBy];
+    newSortBy.sort((a, b) => a.id === designatedColumn.id ? -1 : b.id === designatedColumn.id ? 1 : 0);
     if (designatedColumn.sortedIndex === 0) {
-      sortBy[0].desc = !sortBy[0].desc;
+      newSortBy[0].desc = !newSortBy[0].desc;
     }
-    setSortBy(sortBy);
-    // get current state
-//    const sortBy = headerGroups.map(headerGroup => headerGroup.headers.map((column) => { id: column.id, desc: column.isSortedDesc } ));
-//    const sortedIndices = headerGroups.map(headerGroup => headerGroup.headers.map((column) => column.sortedIndex));
-//    sortedIndices[newtop] = -1;
-//    sortBy.sort((a, b) => ); // negative for a < b
-//    console.log(cur.map((dummy, i) => ));
-//    isSortedDesc
-//    setSortBy([{id: X, desc: X}]);
+    setSortBy(newSortBy);
   };
 
   // for intercepting sort clicks
@@ -135,7 +156,7 @@ function App() {
      {/* Apply the table body props */}
      <tbody {...getTableBodyProps()}>
        {// Loop over the table rows
-       rows.map(row => {
+       rows.map((row, r) => {
          // Prepare the row for display
          prepareRow(row)
          return (
@@ -146,20 +167,16 @@ function App() {
                // Apply the cell props
                return (
                  <td {...cell.getCellProps()}>
-                      {i === 0 ? ( cell.isAggregated ? 
-                        row.subRows.length === 1 ? <>{'▹ '}{cell.render('Cell')}</> : 
+                      {i === 0 ? (
+                        row.subRows.length > 0 ? 
                         // If it's a grouped cell, add an expander
                         <>
-                          <span {...row.getToggleRowExpandedProps()}>
+                          <span {...row.getToggleRowExpandedProps({ onClick: () => getCountry(row) })}>
                             { row.isExpanded ? '▾' : '▸'}{' '}{cell.render('Cell')}
                           </span>
-                          
-                        </> : ""
-                      ) : cell.isAggregated ? (
-                        // If the cell is aggregated, use the Aggregated
-                        // renderer for cell
-                        cell.render('Aggregated')
-                      ) : cell.isPlaceholder ? null : ( // For cells with repeated values, render null
+                        </>
+                        : <span style={{ paddingLeft: '2em' }}>Part {r}:{cell.render('Cell')}</span>) 
+                      : cell.isPlaceholder ? null : ( // For cells with repeated values, render null
                         // Otherwise, just render the regular cell
                         cell.render('Cell')
                       )}

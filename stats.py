@@ -1,6 +1,7 @@
 #!/usr/local/bin/python3.6
 
 from functools import reduce
+from itertools import zip_longest
 from more_itertools import pairwise
 from operator import itemgetter
 from os.path import basename, splitext
@@ -16,9 +17,10 @@ from area import area
 from countryname import countryname
 
 argparser = argparse.ArgumentParser(description='generate some information about (multi)polygons from geojson files')
-argparser.add_argument('file', nargs='*', help='geojson file(s)')
-argparser.add_argument('-parts', action='store_true', default=True, help='write one line per part, not just one line per administrative body')
-argparser.add_argument('-summary', action='store_true', help='display aggregate information about each borders largest polygon')
+argparser.add_argument('file', nargs='*', default=['data/2/AUT.geojson'], help='geojson file(s)')
+argparser.add_argument('-summary', action='store_true', help="only display aggregate information about each borders largest polygon, don't write csv files")
+argparser.add_argument('-parts', action='store_true', default=True, help='write all per-country parts into individual csv files')
+argparser.add_argument('-out', default='web/public/data/', help='output directory (default: {default})')
 
 import percache
 cache = percache.Cache('stats.pycache')
@@ -65,22 +67,17 @@ if args.summary:
   print(f'{len(allstats)} borders, total length of each parts longest outer ring is {round(sum(longestouterring), 2)}, ranging from {round(min(longestouterring), 2)} to {round(max(longestouterring), 2)}')
 
 else:
-  if args.parts:
-    print('iso;name;videos;holes;perimeter;area')
-    with open('videos.csv') as f:
-      videos = { iso: ids for (iso, ids) in csv.reader(f) }
-  else:
-    print('name;nparts;holes;totalperimeter;longestperimeter;totalarea;largestarea')
+  with open('videos.csv') as csvfile:
+    videodata = list(csv.DictReader(csvfile))
 
-  for country in allstats:
-    if args.parts:
-      nameprinted = False
-      try:
-        video = videos[country['iso']]
-      except KeyError:
-        video = ''
-      for part in country['parts']:
-        print(f"{country['iso']};{'' if nameprinted else country['name']};{'' if nameprinted else video};{len(part[2])};{round(part[0], 4)};{round(part[1], 4)}")
-        nameprinted = True
-    else:
-      print(f"{country['name']};{len(parts)};{sum([ len(part[2]) for part in parts ])};{round(sum(part[0] for part in parts), 4)};{round(max([ part[0] for part in parts ]), 4)};{round(sum(part[1] for part in parts), 2)};{round(max([ part[1] for part in parts ]), 2)}")
+  with open(f'{args.out}/data.csv', 'w') as f:
+    f.write('iso;name;videos;nparts;holes;perimeter;area\n')
+    for country in allstats:
+      parts = country['parts'] # TODO if any of them have vids
+      hasvideos = any((len(el['videos']) > 0 for el in filter(lambda row: row['iso'] == country['iso'], videodata)))
+      f.write(f"{country['iso']};{country['name']};{'true' if hasvideos else ''};{len(parts)};{sum([ len(part[2]) for part in parts ])};{sum(part[0] for part in parts):.2f};{sum(part[1] for part in parts):.2f}\n")
+      if args.parts:
+        with open(f'{args.out}/{country["iso"]}.csv', 'w') as p:
+          partinfos = filter(lambda row: row['iso'] == country['iso'], videodata)
+          for (part, partinfo) in zip_longest(parts, partinfos, fillvalue={ key: '' for key in videodata[0].keys()}):
+            p.write(f"{country['iso']};{partinfo['name']};{partinfo['videos']};NaN;{len(part[2])};{part[0]:.2f};{part[1]:.2f}\n")

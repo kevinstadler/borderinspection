@@ -13,9 +13,7 @@
     <!--
       manifest.json provides metadata used when your web app is installed on a
       user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
-    -->
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <!--
       Notice the use of %PUBLIC_URL% in the tags above.
       It will be replaced with the URL of the `public` folder during the build.
       Only files inside the `public` folder can be referenced from the HTML.
@@ -29,21 +27,51 @@
   <body>
     <div id="main">
       <noscript><p>You need to enable JavaScript to run this app.</p></noscript>
-      <h1>Border Inspection</h1>
-      <p>Inspecting borders since 2021</p>
-      <div id="root"></div>
-      <!--
-        This HTML file is a template.
-        If you open it directly in the browser, you will see an empty page.
+      <div style="text-align: center; font-weight: bold; font-size: 3em">Border Inspection</div>
+      <div style="text-align: center; margin: 6px 0 30px 0;">inspecting borders since 2021</div>
+      <h1>Our Products</h2>
+      <h2 class="accordion">Border Inspection 3D</h2>
+      <div>
+        <p>High-quality 3D tours of the world's national boundaries, rendered on demand and whenever we feel like it.</p>
+        <h3>Most recent</h3>
+        <div class="recent">
+          <iframe width="355" height="200" src="https://www.youtube.com/embed/7dLqElIiG0s" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+          <iframe width="355" height="200" src="https://www.youtube.com/embed/jXM0qumNVjc" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+        </div>
+      </div>
 
-        You can add webfonts, meta tags, or analytics to this file.
-        The build step will place the bundled scripts into the <body> tag.
+      <h2 class="accordion">Border Inspection 2D</h2>
+      <div>
+        <p>Our economy product: smooth traversal of all national boundaries in the world through high quality satellite footage, instantly available wherever you are. Our centrally timed playlist guarantees that you and people all around the world will share your border experience in a fully synchronous manner!</p>
+        <h4>Work in progress, please check back later</h4>
+      </div>
 
-        To begin the development, run `npm start` or `yarn start`.
-        To create a production bundle, use `npm run build` or `yarn build`.
-      -->
+      <h2>Border Inspection Numeric</h2>
+      <!-- show this one by default with max-height: none -->
+      <div style="max-height: none; transition: max-height 0.7s ease-out;">
+        <p>For our non-visually inclined patrons: a thorough survey of the geometric properties of the world's national boundaries and all of their constituent parts.</p>
+        <h4>Coming soon:</h4>
+        <ul>
+          <li>borderline landcover statistics (land vs. sea)</li>
+          <li>borderline shape statistics (e.g. convexity, polygon complexity)</li>
+        </ul>
+        <div id="root"></div>
+      </div>
       <hr />
-      <p><i>A service provided by the <a href="">Futile Software Corporation</a>. Underlying data <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>.</i></p>
+      <p><i>A service provided by the <a href="https://thiswasyouridea.com">Futile Software Corporation</a>. Data is based on © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>.</i></p>
     </div>
   </body>
+  <script type="text/javascript">
+  var acc = document.getElementsByTagName("h2");
+  for (let i = 0; i < acc.length; i++) {
+    acc[i].addEventListener("click", function() {
+      var panel = this.nextElementSibling;
+      for (let j = 0; j < acc.length; j++) {
+        // TODO setclass accordion on inactive ones
+        acc[j].className = (acc[j] === this) ? '' : 'accordion';
+        acc[j].nextElementSibling.style.maxHeight = (panel === acc[j].nextElementSibling) ? 'none' : null;
+      }
+    });
+  }
+</script>
 </html>
