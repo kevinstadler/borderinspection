@@ -129,5 +129,11 @@ def preparecountry(country):
 
 countries = [ preparecountry(json.load(open(filename))) for filename in args.file ]
 
+# TODO sort by short name
+import pycountry
+# pycountry.countries()
+
+# name = countries.get(alpha_3=feature['properties']['tags']['ISO3166-1:alpha3'])
+
 print(chevron.render(open(args.template + '.ms'), { 'countries': countries }))
 

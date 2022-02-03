@@ -71,6 +71,7 @@ def getpartsandholesfromfile(filename):
     partorder = [ i for i, pt in sorted(enumerate([s['length'] for s in stats ]), key=itemgetter(1), reverse=True) ]
     if len(partorder) > 1:
       print(f"Part order: {partorder}")
+      # TODO add other (shorter) names
     return { 'info': { 'iso2': fts[0]['properties']['tags']['ISO3166-1:alpha2'], 'iso3': fts[0]['properties']['tags']['ISO3166-1:alpha3'], 'name': countryname(fts[0]), 'id': fts[0]['properties']['id'] }, 'parts': [ parts[i] for i in partorder ], 'stats': [ stats[i] for i in partorder ] }
 
 #@cache

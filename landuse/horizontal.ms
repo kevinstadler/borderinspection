@@ -11,15 +11,18 @@ gtag('js', new Date());
 gtag('config', 'UA-96498670-1');
 </script>
 <title>border inspection: landuse</title>
-<meta
-  name="description"
-  content="landuse of the world's national borders"
-/>
+<meta name="description" content="what the world's national borders are used for" />
+<meta property="og:title" content="border inspection: landuse">
+<meta property="og:url" content="https://thiswasyouridea.com/landuse/">
+<meta property="og:image" content="http://res.cloudinary.com/futile/image/upload/w_auto,c_crop,q_auto/meta/landuse.png">
+<meta property="og:image:secure_url" content="https://res.cloudinary.com/futile/image/upload/w_auto,c_crop,q_auto/meta/landuse.png">
+<meta property="og:type" content="website">
+<meta property="og:description" content="what the world's national borders are used for" >
+
 <base target="_blank">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@400;500&display=swap" rel="stylesheet">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 
 <style type="text/css">
 html {
