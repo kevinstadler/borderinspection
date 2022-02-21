@@ -26,6 +26,6 @@ def countryname(feature):
         continue
   # sometimes prepend 'The' (https://www.grammar-quizzes.com/article4c.html)
   # skip first letter because it might be upper or lower case 'the'
-  if not name.startswith('he ', 1) and any([part in name for part in ['Commonwealth', 'Democratic', 'Duchy', 'Federation', 'Holy', 'Kingdom', 'Principality', 'Republic', 'State of', 'Union', 'United']]):
+  if not name.startswith('he ', 1) and any([part in name for part in ['Commonwealth', 'Confederation', 'Democratic', 'Duchy', 'Federation', 'Holy', 'Islands', 'Kingdom', 'Principality', 'Republic', 'State of', 'Union', 'United']]):
     name = 'The ' + name
   return name
