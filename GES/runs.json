@@ -1,0 +1,33 @@
+{
+"HKG": {
+	"file": "3/HKG.geojson",
+	"start": [113.9478, 22.472],
+	"skipframes": 0,
+	"split": 90000,
+	"tilt": 9,
+	"vd": 100,
+	"kmh": 90,
+	"runs": [
+		{
+			"name": "The border",
+			"url": "TODO",
+			"n": 0
+		}
+	]
+},
+"USA": {
+	"file": "2/USA.geojson",
+	"start": [123.09096, 49.00206],
+	"split": 15000,
+	"tilt": 35,
+	"vd": 750,
+	"kmh": 70,
+	"runs": [
+		{
+		"name": "Point Roberts to ?",
+		"skip": 0,
+		"n": 1
+		}
+	]
+}
+}
