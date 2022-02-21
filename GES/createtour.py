@@ -67,8 +67,9 @@ shape.add_argument('-split', '-s', type=int, help='split tour into chunks of up 
 shape.add_argument('-frompart', type=int, default=1, help='first part to write (counting starts at 1) TODO this isnt actually implemented yet')
 shape.add_argument('-nparts', type=int, help='write this many parts')
 shape.add_argument('-simplify', type=float, default=.00005, help='polygon simplification tolerance') # .0001 ~ 11.1m (at the equator)
-shape.add_argument('-skip', type=int, default=0, help='move starting point of the tour forward by this many points from the beginning of the input polygon (before simplification)')
-shape.add_argument('-startpoint', type=float, nargs=2, help='start tour at the polygon point at the given longitude/latitude. takes precedence over -skip.')
+#shape.add_argument('-skip', type=int, default=0, help='move starting point of the tour forward by this many points from the beginning of the input polygon (before simplification)')
+shape.add_argument('-startpoint', type=float, nargs=2, help='start tour at the polygon point at the given longitude/latitude.')
+shape.add_argument('-skipframes', type=int, nargs='?', help='skip this many video frames after the starting vertex (needs to be positive)')
 shape.add_argument('-ccw', '-left', action='store_true', help='whether the surrounded polygon should be to the left of the tour (default is clockwise, polygon to the right)')
 
 group = argparser.add_mutually_exclusive_group(required=True)
@@ -300,15 +301,14 @@ for filename in args.file:
       args.skip = next(i for i, (lon, lat) in enumerate(coords) if abs(lon - args.startpoint[0]) < .01 and abs(lat - args.startpoint[1]) < .01)
     print(f'Moving starting point of tour forward to {coords[args.skip]} (polygon point #{args.skip})')
 
-  if args.skip != 0:
-    if args.skip < 0:
+  #if args.skip != 0:
+  #  if args.skip < 0:
       # reverse
-      args.skip = len(coords) + args.skip
-    print(f'Moving tour starting point forward to {args.skip} point(s) into the original polygon')
+  #    args.skip = len(coords) + args.skip
     coords = coords[args.skip:] + coords[:args.skip]
 
   if not args.moviereel:
-    name = name + f'-s{args.skip}-{coords[0][0]}-{coords[0][1]}'
+    name = name + f'-s{coords[0][0]}-{coords[0][1]}'
 
   if args.simplify != None:
     origcount = len(coords)
